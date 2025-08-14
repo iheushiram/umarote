@@ -1,0 +1,116 @@
+/* ===========================================================
+  Horse Info (個別情報)
+=========================================================== */
+
+:root{
+  --hi-text: #111827;           /* gray-900 */
+  --hi-muted:#6b7280;           /* gray-500 */
+  --hi-accent:#0369a1;          /* sky-700 */
+  --hi-border:#e5e7eb;          /* gray-200 */
+  --hi-danger:#dc2626;          /* red-600 */
+  --hi-info:#2563eb;            /* blue-600 */
+  --hi-chip-bg:#f3f4f6;         /* gray-100 */
+  --hi-chip-fg:#374151;         /* gray-700 */
+  --hi-radius:12px;
+}
+
+.horse-info{
+  display:grid;
+  grid-template-rows:auto auto auto auto;
+  row-gap:6px;
+  color:var(--hi-text);
+  font-size:13px;
+  line-height:1.5;
+  font-feature-settings:"tnum" 1,"lnum" 1; /* 等幅数字 */
+  min-width:0;
+}
+
+/* --- 血統/馬名ブロック ---------------------------------- */
+.horse-info__blood{min-width:0}
+.horse-info__sire{
+  color:var(--hi-muted);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.horse-info__name{
+  font-weight:700;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.horse-info__name a{ color:var(--hi-accent); text-decoration:none; }
+.horse-info__name a:hover{text-decoration:underline}
+.horse-info__dam{
+  color:var(--hi-muted);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+/* --- 厩舎/所属 ------------------------------------------- */
+.horse-info__stable{
+  color:var(--hi-accent);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+/* --- メタ（差/中〇週 等）--------------------------------- */
+.horse-info__meta{ display:flex; flex-wrap:wrap; gap:6px; }
+.hi-chip{
+  display:inline-block; padding:2px 6px;
+  border-radius:999px;
+  background:var(--hi-chip-bg); color:var(--hi-chip-fg);
+  font-size:11px; line-height:1.2;
+}
+
+/* --- 数値群（体重・オッズ・人気）------------------------ */
+.horse-info__numbers{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  align-items:baseline;
+  column-gap:12px;
+}
+
+/* クッション値別成績（右下表示） */
+.horse-info__cushion{
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+  color: var(--hi-muted);
+  font-size: 12px;
+}
+@media (max-width: 600px){
+  .horse-info__cushion{ font-size: 11px; }
+}
+
+/* 周り方別成績（右下表示） */
+.horse-info__turn{
+  margin-top: 2px;
+  display: flex;
+  justify-content: flex-end;
+  color: var(--hi-muted);
+  font-size: 12px;
+}
+@media (max-width: 600px){
+  .horse-info__turn{ font-size: 11px; }
+}
+
+.horse-info__weight{ white-space:nowrap; }
+.horse-info__weight .hi-weight-diff{ margin-left:2px; }
+.hi-up   { color:var(--hi-danger); }
+.hi-down { color:var(--hi-info);   }
+.hi-flat { color:var(--hi-muted);  }
+
+.horse-info__odds{ text-align:right; color:var(--hi-text); white-space:nowrap; }
+.horse-info__pop{ color:var(--hi-muted); white-space:nowrap; }
+
+.horse-info--card{ border:1px solid var(--hi-border); border-radius:var(--hi-radius); padding:10px 12px; }
+
+@media (prefers-color-scheme: dark){
+  :root{
+    --hi-text:#e5e7eb; --hi-muted:#9ca3af; --hi-accent:#7dd3fc;
+    --hi-border:#1f2937; --hi-chip-bg:#111827; --hi-chip-fg:#d1d5db;
+  }
+}
+
+/* ---- モバイル最適化 ---- */
+@media (max-width: 600px){
+  .horse-info{ font-size:12px; row-gap:4px; }
+  .horse-info__name{ font-weight:600; }
+  .horse-info__stable{ font-size:12px; }
+  .hi-chip{ font-size:10px; padding:1px 4px; }
+}

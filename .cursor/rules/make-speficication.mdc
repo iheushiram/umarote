@@ -1,0 +1,234 @@
+---
+description: 実装要件
+globs: 
+alwaysApply: false
+---
+# Reactアプリケーション開発ベストプラクティス
+
+## プロンプトのレスポンスは日本語で返してください
+
+## 1. コンポーネント設計の原則
+
+### 単一責任の原則
+- 各コンポーネントは1つの責任だけを持つべき
+- 大きなコンポーネントは小さな再利用可能なコンポーネントに分割する
+- 各コンポーネントの役割を明確にし、300行以下を目指す
+
+### コンポーネント分類
+- **Presentational Components**: UIのみに集中（データ取得なし）
+- **Container Components**: データ取得とロジックに集中
+- **HOC (Higher Order Components)**: コンポーネントを強化する関数
+- **Custom Hooks**: ロジックを再利用可能な形に抽出
+
+## 2. 状態管理
+
+### ローカル状態の管理
+- 単純な状態には `useState` を使用
+- 複雑な状態やロジックには `useReducer` を使用
+- 関連する状態はグループ化する
+
+### グローバル状態の管理
+- Context API: 小〜中規模の状態共有に最適
+- Redux/Zustand/Jotai: 大規模アプリの状態管理に
+- サーバー状態とクライアント状態を区別する (React Query/SWRの活用)
+
+### イミュータブルな状態更新
+```javascript
+// 良い例
+setItems([...items, newItem]);
+
+// 悪い例
+items.push(newItem);
+setItems(items);
+```
+
+## 3. パフォーマンス最適化
+
+### レンダリングの最適化
+- `React.memo` で不要な再レンダリングを防止
+- `useMemo` と `useCallback` を効果的に使用
+- コンポーネントツリーを浅く保つ
+
+### コード分割とLazy Loading
+```javascript
+const LazyComponent = React.lazy(() => import('./LazyComponent'));
+
+function MyComponent() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <LazyComponent />
+    </Suspense>
+  );
+}
+```
+
+### 仮想化リスト
+- 大量のデータを表示する場合は `react-window` や `react-virtualized` を使用
+
+## 4. 副作用の管理
+
+### `useEffect` の適切な使用
+- 依存配列を正確に定義
+- クリーンアップ関数を忘れない
+- 副作用をできるだけ小さくする
+
+```javascript
+useEffect(() => {
+  const subscription = subscribeToData(id);
+  
+  // クリーンアップ関数を返す
+  return () => {
+    subscription.unsubscribe();
+  };
+}, [id]); // 依存配列に関連する値を含める
+```
+
+### データフェッチング
+- カスタムフックにデータフェッチロジックをカプセル化
+- React Query/SWRなどのライブラリを活用
+- エラー処理とローディング状態の管理を忘れない
+
+## 5. 型安全性
+
+### TypeScriptの活用
+- Propの型定義と検証
+- コンポーネント間のインターフェイスを明確に
+- ジェネリック型で再利用可能なコンポーネントを作成
+
+```typescript
+interface ButtonProps {
+  label: string;
+  onClick: () => void;
+  variant?: 'primary' | 'secondary';
+  disabled?: boolean;
+}
+
+const Button: React.FC<ButtonProps> = ({ 
+  label, 
+  onClick, 
+  variant = 'primary',
+  disabled = false 
+}) => {
+  // ...
+};
+```
+
+## 6. テスト戦略
+
+### 単体テスト
+- React Testing Libraryを使用
+- ユーザーの行動をシミュレートしたテスト
+- 実装の詳細ではなく機能をテスト
+
+### コンポーネントテスト
+```javascript
+test('ボタンをクリックするとonClickが呼ばれる', () => {
+  const handleClick = jest.fn();
+  render(<Button label="クリック" onClick={handleClick} />);
+  
+  fireEvent.click(screen.getByText('クリック'));
+  
+  expect(handleClick).toHaveBeenCalledTimes(1);
+});
+```
+
+### E2Eテスト
+- Cypress/Playwright で重要なユーザーフローをテスト
+
+## 7. コードの品質と一貫性
+
+### ESLintとPrettierの設定
+- プロジェクト全体で一貫したコードスタイル
+- React特有のルールを有効化
+
+### フォルダ構造
+```
+src/
+  components/
+    common/       # 再利用可能なUI要素
+    features/     # 機能ごとのコンポーネント
+  hooks/          # カスタムフック
+  contexts/       # Contextファイル
+  services/       # APIとの通信
+  utils/          # ユーティリティ関数
+  types/          # TypeScript型定義
+  pages/          # ルートレベルページ
+```
+
+### 命名規則
+- コンポーネント: PascalCase (例: `UserProfile`)
+- フック: camelCaseで `use` プレフィックス (例: `useAuth`)
+- ファイル: コンポーネントと同じ名前 (例: `UserProfile.tsx`)
+
+## 8. アクセシビリティ (A11y)
+
+### 基本原則
+- セマンティックなHTMLを使用
+- キーボードナビゲーションをサポート
+- スクリーンリーダー対応
+- 十分なカラーコントラスト
+
+### 実装例
+```jsx
+// 悪い例
+<div onClick={handleClick}>送信</div>
+
+// 良い例
+<button 
+  onClick={handleClick} 
+  aria-label="データを送信"
+  disabled={isLoading}
+>
+  {isLoading ? '送信中...' : '送信'}
+</button>
+```
+
+## 9. セキュリティ対策
+
+### XSS対策
+- ユーザー入力をエスケープ
+- `dangerouslySetInnerHTML` の使用を最小限に
+
+### 環境変数の管理
+- 機密情報はクライアント側に露出させない
+- `.env` ファイルで環境変数を管理
+
+## 10. デプロイとビルド最適化
+
+### ビルド最適化
+- Tree Shaking の活用
+- 画像最適化とリソースの圧縮
+- Code Splitting の実装
+
+### CI/CD パイプライン
+- プルリクエスト時に自動テスト
+- 自動デプロイの設定
+- 環境ごとのビルド設定
+
+## 11. 開発者体験の向上
+
+### デバッグツール
+- React DevTools の活用
+- Redux DevTools (Reduxを使用する場合)
+- エラーバウンダリの実装
+
+### ドキュメンテーション
+- コンポーネントの使用例を提供
+- Storybookでコンポーネントカタログを作成
+- JSDocコメントで関数を文書化
+
+## 12. モバイルとレスポンシブ対応
+
+### レスポンシブデザイン
+- メディアクエリよりもFlexboxとGridを優先
+- ビューポートメタタグの設定
+- タッチ対応UI要素の設計
+
+### PWA対応
+- Service Workerの実装
+- マニフェストファイルの設定
+- オフライン対応と遅延読み込み
+
+---
+
+*このドキュメントはReactアプリケーション開発の基本原則をカバーしています。プロジェクトの特性や要件に合わせて適宜調整してください。*

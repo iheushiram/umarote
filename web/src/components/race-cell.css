@@ -1,0 +1,168 @@
+/* ========== Race Cell (CSS only) ===========================================
+期待するDOM例（クラス名だけ合わせればOK）
+.race-cell
+  .race-cell__corner        右上の枠: リプレイ / 枠番
+  .race-cell__date          日付と場名
+  .race-cell__name          レース名（リンクでもdivでも可）
+  .race-cell__meta          条件チップ群（芝/ダ・距離・タイム・馬場）
+  .race-cell__info          出走情報（頭数/人気/騎手/斤量など）
+  .race-cell__passing       通過順・上がり・馬体重
+  .race-cell__winner        勝ち馬とオッズ
+--------------------------------------------------------------------------- */
+
+:root {
+  --rc-bg: #fff;
+  --rc-border: #e5e7eb;          /* gray-200 */
+  --rc-shadow: 0 1px 3px rgba(0,0,0,.06);
+  --rc-shadow-hover: 0 4px 12px rgba(0,0,0,.10);
+  --rc-text: #111827;            /* gray-900 */
+  --rc-muted: #6b7280;           /* gray-500 */
+  --rc-accent: #0369a1;          /* sky-700 */
+  --rc-chip-bg: #f3f4f6;         /* gray-100 */
+  --rc-chip-fg: #374151;         /* gray-700 */
+  --rc-radius: 12px;
+
+  /* semantic */
+  --rc-turf-bg: #dcfce7;         /* emerald-100 */
+  --rc-turf-fg: #047857;         /* emerald-700 */
+  --rc-dirt-bg: #fef3c7;         /* amber-100 */
+  --rc-dirt-fg: #92400e;         /* amber-800 */
+  --rc-going-good-bg: #ecfdf5;   /* emerald-50 */
+  --rc-going-good-fg: #047857;
+  --rc-going-heavy-bg: #fff7ed;  /* orange-50 */
+  --rc-going-heavy-fg: #9a3412;
+  --rc-going-bad-bg: #fee2e2;    /* rose-100 */
+  --rc-going-bad-fg: #b91c1c;
+}
+
+/* コンテナ */
+.race-cell {
+  position: relative;
+  box-sizing: border-box; /* widthにpaddingを含める */
+  width: 180px;           /* コンパクト幅 */
+  min-width: 180px;
+  background: var(--rc-bg);
+  color: var(--rc-text);
+  border: 1px solid var(--rc-border);
+  border-radius: var(--rc-radius);
+  box-shadow: var(--rc-shadow);
+  padding: 12px;
+  line-height: 1.5;
+  font-size: 13px;
+  font-feature-settings: "tnum" 1, "lnum" 1; /* tabular numbers */
+  transition: box-shadow .2s ease, transform .2s ease;
+}
+.race-cell:hover { box-shadow: var(--rc-shadow-hover); }
+
+/* 右上コーナー（リプレイ・枠番） */
+.race-cell__corner {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.race-cell__replay {
+  display: inline-grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  font-size: 10px;
+  border: 1px solid #d1d5db;     /* gray-300 */
+  border-radius: 4px;
+  background: #fff;
+  color: #4b5563;                 /* gray-600 */
+}
+.race-cell__frame {
+  display: inline-grid;
+  place-items: center;
+  width: 28px; height: 28px;
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 6px;
+  background: #f3f4f6;           /* gray-100 */
+  color: #111827;
+}
+
+/* 上段 */
+.race-cell__date {
+  font-size: 12px;
+  color: var(--rc-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* レース名 */
+.race-cell__name {
+  margin-top: 2px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.race-cell__name a { color: var(--rc-accent); text-decoration: none; }
+.race-cell__name a:hover { text-decoration: underline; }
+
+/* 条件チップ */
+.race-cell__meta {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: #374151; /* gray-700 */
+}
+.rc-chip {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--rc-chip-bg);
+  color: var(--rc-chip-fg);
+  font-size: 11px;
+  line-height: 1.2;
+}
+.rc-chip--turf   { background: var(--rc-turf-bg); color: var(--rc-turf-fg); }
+.rc-chip--dirt   { background: var(--rc-dirt-bg); color: var(--rc-dirt-fg); }
+.rc-chip--good   { background: var(--rc-going-good-bg); color: var(--rc-going-good-fg); }
+.rc-chip--heavy  { background: var(--rc-going-heavy-bg); color: var(--rc-going-heavy-fg); }
+.rc-chip--bad    { background: var(--rc-going-bad-bg);  color: var(--rc-going-bad-fg); }
+
+/* 出走情報・通過・勝ち馬 */
+.race-cell__info,
+.race-cell__passing,
+.race-cell__winner {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #374151;
+}
+
+/* 体重の増減色（必要なら） */
+.race-cell__weight-up   { color: #dc2626; }  /* red-600 */
+.race-cell__weight-down { color: #2563eb; }  /* blue-600 */
+
+.race-cell__winner a { color: var(--rc-accent); text-decoration: none; }
+.race-cell__winner a:hover { text-decoration: underline; }
+.race-cell__odds { color: var(--rc-muted); }
+
+/* 余白が原因で横スクロールが出ないよう、内側のテキストは省略可 */
+.race-cell, .race-cell * { min-width: 0; }
+
+/* ---- サイズバリアント（任意） ---- */
+.race-cell--sm { width: var(--rcw, 140px); min-width: var(--rcw, 140px); padding: 10px; font-size: 12px; }
+.race-cell--lg { width: 220px; min-width: 220px; padding: 14px; font-size: 14px; }
+
+/* ---- ダークモード（任意） ---- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --rc-bg: #0b0f14;
+    --rc-border: #1f2937;
+    --rc-text: #e5e7eb;
+    --rc-muted: #9ca3af;
+    --rc-chip-bg: #111827;
+    --rc-chip-fg: #d1d5db;
+    --rc-accent: #7dd3fc;
+  }
+  .race-cell__replay { background: #111827; border-color: #374151; color: #cbd5e1; }
+  .race-cell__frame  { background: #111827; color: #e5e7eb; }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "umarote-worker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "web:dev": "cd web && npm run dev",
+    "web:build": "cd web && npm run build",
+    "web:install": "cd web && npm install",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "db:create": "wrangler d1 create umarote-db",
+    "db:execute": "wrangler d1 execute umarote-db --file=./src/db/migrations/0000_wise_lila_cheney.sql",
+    "db:local": "wrangler d1 execute umarote-db --local --file=./src/db/migrations/0000_wise_lila_cheney.sql"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.4",
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250813.0",
+    "@types/node": "^20.0.0",
+    "drizzle-kit": "^0.31.4",
+    "typescript": "~5.7.2",
+    "wrangler": "^4.29.1"
+  }
+}
