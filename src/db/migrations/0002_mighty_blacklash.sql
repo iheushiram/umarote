@@ -1,0 +1,1 @@
+ALTER TABLE `horses` ADD `current_race_id` text;

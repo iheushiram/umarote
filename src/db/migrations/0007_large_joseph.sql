@@ -1,0 +1,19 @@
+ALTER TABLE `race_entries` ADD `race_name` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `surface` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `distance` integer;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `horse_name` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `sex` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `color` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `father` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `mother` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `owner` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `breeder` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `maternal_grandfather` text;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `previous_popularity` integer;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `previous_finish_position` integer;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `previous_odds` real;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `previous_finish_order` integer;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `day_number` integer;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `interval` integer;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `prize_money` integer;--> statement-breakpoint
+ALTER TABLE `race_entries` ADD `earned_money` integer;

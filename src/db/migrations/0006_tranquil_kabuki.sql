@@ -1,0 +1,1 @@
+ALTER TABLE `race_entries` ADD `date` text NOT NULL;

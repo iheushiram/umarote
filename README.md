@@ -1,3 +1,24 @@
+# データベース起動
+`npx wrangler dev --local`
+
+# フロント起動
+` cd web && npm run dev`
+
+# マイグレーションファイル作成
+` npx drizzle-kit generate`
+
+# マイグレーションファイル適用
+`npx wrangler d1 migrations apply umarote-db --local`
+
+# テーブル一覧表示コマンド
+`npx wrangler d1 execute umarote-db --local --command "SELECT name FROM sqlite_master WHERE type='table';"`
+
+# テーブル内のデータを消すコマンド
+`npx wrangler d1 execute umarote-db --local --command "DELETE FROM horses;"`
+
+# まとめて消す
+`npx wrangler d1 execute umarote-db --local --command "DELETE FROM race_results;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM race_entries;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM races;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM horses;"`
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

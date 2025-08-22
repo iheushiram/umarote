@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Typography,
@@ -13,11 +13,13 @@ import {
   TableRow,
   Chip
 } from "@mui/material";
-import './race-cell.css';
 import './horse-info.css';
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { HorseEntry } from '../types/horse';
+import { parseRaceId, formatRaceIdDisplay } from '../utils/raceUtils';
+import { AdminService, RaceResultData } from '../services/adminService';
+import { formatRaceTime } from '../utils/timeUtils';
 
 export default function HorseRacingTable() {
   const { raceId } = useParams<{ raceId: string }>();
@@ -32,158 +34,126 @@ export default function HorseRacingTable() {
   };
   const [selectedRange, setSelectedRange] = useState<CushionRange>('9_0_9_9');
 
-  const raceInfo = useMemo(() => ({
-    raceId: raceId || '20250813-TOKYO-11',
-    raceName: 'フェブラリーS(G1)',
-    venue: '東京',
-    distance: 1600,
-    surface: 'ダート' as const,
-    direction: '左',
-    cushionValue: 9.4
-  }), [raceId]);
+  const [raceInfo, setRaceInfo] = useState<{
+    raceId: string;
+    raceName: string;
+    venue: string;
+    distance: number;
+    surface: '芝' | 'ダート';
+    direction: '右' | '左';
+    cushionValue?: number;
+  }>({
+    raceId: raceId || '',
+    raceName: '',
+    venue: '',
+    distance: 0,
+    surface: 'ダート',
+    direction: '右',
+    cushionValue: undefined
+  });
 
-  // サンプル馬データ（テーブル表示用）
-  const sampleEntries: HorseEntry[] = [
-    {
-      horseId: 'H001',
-      frameNo: 1,
-      horseNo: 1,
-      name: 'レモンポップ',
-      sexAge: '牡4',
-      weightCarried: 56.0,
-      trainer: '池江泰郎',
-      jockey: '武豊',
-      stable: '栗東・○○厩舎',
-      bodyWeight: { value: 480, diff: -4 },
-      runningStyle: '先行',
-      blood: {
-        sire: 'ディープインパクト',
-        dam: 'レモンティー',
-        damsire: 'サンデーサイレンス'
-      },
-      odds: 3.2,
-      popularity: 1,
-      recentForm: [1, 2, 1, 3, 2],
-      races: [
-        {
-          raceId: 'R001',
-          date: '2024-12-29',
-          track: '中山',
-          distance: 2000,
-          surface: 'ダート',
-          going: '良',
-          class: '東京大賞典(G1)',
-          fieldSize: 16,
-          barrier: 3,
-          position: 1,
-          time: '2:03.2',
-          last3F: '37.8',
-          passing: '4-3-2',
-          jockey: '武豊',
-          weightCarried: 57.0,
-          margin: '1 1/4馬身',
-          notes: '直線で力強く抜け出す',
-          isFeature: true
-        },
-        {
-          raceId: 'R002',
-          date: '2024-11-03',
-          track: '東京',
-          distance: 1600,
-          surface: 'ダート',
-          going: '良',
-          class: '武蔵野S(G3)',
-          fieldSize: 16,
-          barrier: 5,
-          position: 2,
-          time: '1:36.8',
-          last3F: '37.2',
-          passing: '8-6-4',
-          jockey: '武豊',
-          weightCarried: 56.0,
-          margin: 'クビ',
-          notes: '惜しい2着',
-          isFeature: true
+  const [entries, setEntries] = useState<HorseEntry[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const admin = new AdminService();
+    if (!raceId) return;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const race = await admin.getRace(raceId as string);
+        if (race) {
+          setRaceInfo({
+            raceId: race.raceId,
+            raceName: race.raceName,
+            venue: race.venue,
+            distance: race.distance,
+            surface: race.surface,
+            direction: race.direction,
+            cushionValue: race.cushionValue
+          });
         }
-      ],
-      stats: { winRate: 0.30, place2Rate: 0.60, place3Rate: 0.80, n: 10 }
-    },
-    {
-      horseId: 'H002',
-      frameNo: 2,
-      horseNo: 3,
-      name: 'ゴールドシップ',
-      sexAge: '牡5',
-      weightCarried: 57.0,
-      trainer: '友道康夫',
-      jockey: '川田将雅',
-      stable: '栗東・△△厩舎',
-      bodyWeight: { value: 520, diff: +8 },
-      runningStyle: '追込',
-      blood: {
-        sire: 'ステイゴールド',
-        dam: 'ポイントフラッグ',
-        damsire: 'マルゼンスキー'
-      },
-      odds: 4.5,
-      popularity: 2,
-      recentForm: [2, 1, 1, 5, 3],
-      races: [
-        {
-          raceId: 'R003',
-          date: '2024-12-28',
-          track: '中山',
-          distance: 2000,
-          surface: '芝',
-          going: '良',
-          class: 'ホープフルS(G1)',
-          fieldSize: 18,
-          barrier: 7,
-          position: 2,
-          time: '1:59.8',
-          last3F: '33.8',
-          passing: '12-10-6',
-          jockey: '川田将雅',
-          weightCarried: 55.0,
-          margin: 'ハナ',
-          notes: '最後方から豪脚',
-          isFeature: true
-        }
-      ],
-      stats: { winRate: 0.25, place2Rate: 0.50, place3Rate: 0.75, n: 12 }
-    }
-  ];
+
+        const es = await admin.getRaceEntries(raceId as string);
+        // 各馬の直近レース(最大5件)も取得
+        const resultsMap = new Map<string, RaceResultData[]>();
+        await Promise.all(es.map(async (e) => {
+          const res = await admin.getRaceResults(undefined, e.horseId, 5);
+          resultsMap.set(e.horseId, res);
+        }));
+
+        const mapped: HorseEntry[] = es.map((e) => {
+          const horse = e.horse as any;
+          const sex = (horse?.sex as string) || '';
+          const sexAge = `${sex}${e.age ?? ''}`;
+
+          const recent = (resultsMap.get(e.horseId) || []).slice(0, 5);
+          const raceDetails = recent.map(r => {
+            return {
+              raceId: r.raceId,
+              date: r.date,
+              track: r.venue,
+              distance: r.distance,
+              surface: r.courseType,
+              going: r.courseCondition,
+              class: r.raceName,
+              fieldSize: 0,
+              barrier: 0,
+              position: r.finishPosition,
+              time: r.time,
+              last3F: r.lastThreeFurlong,
+              passing: (() => {
+                const passingArray = [r.pos2c, r.pos3c, r.pos4c];
+                const filtered = passingArray.filter(v => v !== undefined && v !== null);
+                return filtered.length > 0 ? filtered.join('-') : null;
+              })(),
+              jockey: r.jockey,
+              weightCarried: r.weight,
+              margin: r.margin,
+              isFeature: !!(r.raceName?.match(/G[1-3]|重賞|特別/))
+            };
+          });
+
+          return {
+            horseId: e.horseId,
+            frameNo: e.frameNo,
+            horseNo: e.horseNo,
+            name: horse?.name || e.horseId,
+            sexAge,
+            weightCarried: e.weight,
+            trainer: e.trainer || horse?.trainer || '',
+            jockey: e.jockey,
+            stable: e.affiliation || '',
+            bodyWeight: { value: e.bodyWeight || 0, diff: e.bodyWeightDiff || 0 },
+            runningStyle: '差し',
+            blood: { sire: horse?.father || '', dam: horse?.mother || '', damsire: '' },
+            odds: undefined,
+            popularity: e.popularity || undefined,
+            recentForm: (resultsMap.get(e.horseId) || []).map(r => r.finishPosition).slice(0, 5),
+            races: raceDetails
+          } as HorseEntry;
+        });
+
+        setEntries(mapped);
+      } catch (err) {
+        console.error(err);
+        setError('出馬表の読み込みに失敗しました');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [raceId]);
 
   // モックのクッション値別成績（horseId -> range -> [1,2,3,other]）
-  const cushionStats: Record<string, Record<CushionRange, [number, number, number, number]>> = {
-    H001: {
-      lte_7_9: [1, 0, 1, 2],
-      '8_0_8_9': [2, 1, 0, 1],
-      '9_0_9_9': [3, 2, 1, 0],
-      gte_10_0: [1, 1, 0, 2]
-    },
-    H002: {
-      lte_7_9: [0, 1, 0, 3],
-      '8_0_8_9': [1, 1, 1, 1],
-      '9_0_9_9': [2, 0, 1, 2],
-      gte_10_0: [0, 0, 1, 3]
-    }
-  };
+  const cushionStats: Record<string, Record<CushionRange, [number, number, number, number]>> = {} as any;
 
   // 周り方選択とモック成績
   type Turn = 'none' | 'left' | 'right';
   const turnLabels: Record<Turn, string> = { none: 'なし', left: '左回り', right: '右回り' };
   const [selectedTurn, setSelectedTurn] = useState<Turn>('left');
-  const turnStats: Record<string, Record<Turn, [number, number, number, number]>> = {
-    H001: {
-      left: [4, 1, 0, 2],
-      right: [2, 1, 2, 2]
-    },
-    H002: {
-      left: [1, 2, 1, 3],
-      right: [2, 0, 1, 2]
-    }
-  };
+  const turnStats: Record<string, Record<Turn, [number, number, number, number]>> = {} as any;
 
   return (
     <Box 
@@ -193,9 +163,14 @@ export default function HorseRacingTable() {
         '--horsenow': { xs: '44px', sm: '64px' },
         '--namew': { xs: '140px', sm: '260px', md: '280px' },
         '--rcw': { xs: '136px', sm: '132px', md: '140px' },
-        '--cellw': { xs: '144px', sm: '140px', md: '148px' }
+        '--cellw': { xs: '140px', sm: '136px', md: '144px' }
       }}
     >
+      {error && (
+        <Box sx={{ mb: 2 }}>
+          <Typography color="error">{error}</Typography>
+        </Box>
+      )}
       <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
         <Button startIcon={<ArrowLeft />} onClick={() => navigate('/')} variant="outlined">
           トップに戻る
@@ -205,7 +180,7 @@ export default function HorseRacingTable() {
             {raceInfo.raceName}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            {raceInfo.venue} {raceInfo.surface}{raceInfo.distance}m {raceInfo.direction}回り
+            {formatRaceIdDisplay(raceId || '')} - {raceInfo.venue} {raceInfo.surface}{raceInfo.distance}m {raceInfo.direction}回り
             {raceInfo.surface === '芝' && ` クッション値:${raceInfo.cushionValue}`}
           </Typography>
         </Box>
@@ -242,7 +217,7 @@ export default function HorseRacingTable() {
       </Stack>
 
       <TableContainer component={Paper} sx={{ maxWidth: '100%', overflowX: 'auto' }}>
-        <Table size="small" stickyHeader aria-label="race entries table" sx={{ minWidth: 900, '& td, & th': { px: { xs: 0.25, sm: 0.5 } } }}>
+        <Table size="small" stickyHeader aria-label="race entries table" sx={{ minWidth: 850, '& td, & th': { px: { xs: 0.25, sm: 0.5 } } }}>
           <TableHead>
             <TableRow>
               <TableCell align="center" sx={{ position: 'sticky', left: 0, zIndex: 3, bgcolor: 'background.paper', minWidth: 'var(--framew)', width: 'var(--framew)' }}>枠</TableCell>
@@ -257,7 +232,7 @@ export default function HorseRacingTable() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {sampleEntries.map((h) => (
+            {(loading ? [] : entries).map((h) => (
               <TableRow key={h.horseId}>
                 <TableCell align="center" sx={{ position: 'sticky', left: 0, zIndex: 2, bgcolor: 'background.paper', minWidth: 'var(--framew)', width: 'var(--framew)' }}>
                   <Chip 
@@ -337,9 +312,35 @@ export default function HorseRacingTable() {
                   </Box>
                 </TableCell>
                 {h.races.slice(0, 5).map((r, idx) => {
-                  const surfaceClass = r.surface === '芝' ? 'rc-chip--turf' : 'rc-chip--dirt';
-                  const goingClass = r.going === '良' ? 'rc-chip--good' : (r.going === '不良' ? 'rc-chip--bad' : 'rc-chip--heavy');
-                  const dateLabel = new Date(r.date).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+                  const dateLabel = (() => {
+                    if (!r.date) return '-';
+                    
+                    // 日付文字列を正規化
+                    let dateStr = r.date;
+                    if (typeof dateStr === 'string') {
+                      // YYYYMMDD形式（例：20250621）を処理
+                      if (dateStr.match(/^\d{8}$/)) {
+                        const year = dateStr.substring(0, 4);
+                        const month = dateStr.substring(4, 6);
+                        const day = dateStr.substring(6, 8);
+                        return `${month}/${day}`;
+                      }
+                      // YYYY-MM-DD形式も試す
+                      if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                        const date = new Date(dateStr);
+                        if (!isNaN(date.getTime())) {
+                          return date.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+                        }
+                      }
+                      // その他の形式も試す
+                      const date = new Date(dateStr);
+                      if (!isNaN(date.getTime())) {
+                        return date.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+                      }
+                    }
+                    
+                    return '-';
+                  })();
                   return (
                     <TableCell 
                       key={idx} 
@@ -349,28 +350,100 @@ export default function HorseRacingTable() {
                         whiteSpace: 'normal', 
                         p: { xs: 0.25, sm: 0.5 }, 
                         width: 'var(--cellw)', minWidth: 'var(--cellw)', maxWidth: 'var(--cellw)',
-                        cursor: idx === 0 ? 'pointer' : 'default'
+                        fontSize: '0.75rem',
+                        lineHeight: 1.3
                       }}
-                      onClick={idx === 0 ? () => navigate(`/races/${r.raceId}/results`) : undefined}
-                      title={idx === 0 ? 'このレース結果ページへ' : undefined}
                     >
-                      <div className="race-cell race-cell--sm">
-                        <div className="race-cell__corner">
-                          <span className="race-cell__replay">R</span>
-                          <span className="race-cell__frame">{r.barrier}</span>
-                        </div>
-                        <div className="race-cell__date">{dateLabel} {r.track}</div>
-                        <div className="race-cell__name">{r.class}</div>
-                        <div className="race-cell__meta">
-                          <span className={`rc-chip ${surfaceClass}`}>{r.surface}</span>
-                          <span className="rc-chip">{r.distance}m</span>
-                          {r.time && <span className="rc-chip">{r.time}</span>}
-                          <span className={`rc-chip ${goingClass}`}>{r.going}</span>
-                        </div>
-                        <div className="race-cell__info">{r.fieldSize}頭 {r.jockey} {r.weightCarried}kg</div>
-                        <div className="race-cell__passing">通過 {r.passing} ・ 上り {r.last3F}</div>
-                        <div className="race-cell__winner">{r.position}着</div>
-                      </div>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        {/* 日付・場名・レース名 */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                          <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                            {dateLabel}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            {r.track}
+                          </Typography>
+                          <Typography 
+                            variant="caption" 
+                            sx={{ 
+                              color: 'text.primary', 
+                              fontWeight: 500,
+                              cursor: 'pointer',
+                              textDecoration: 'underline',
+                              '&:hover': { color: 'primary.main' }
+                            }}
+                            onClick={() => navigate(`/races/${r.raceId}/results`)}
+                            title="このレース結果ページへ"
+                          >
+                            {r.class}
+                          </Typography>
+                        </Box>
+                        
+                        {/* 条件情報 */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                          <Chip 
+                            label={r.surface} 
+                            size="small" 
+                            variant="outlined"
+                            sx={{ 
+                              height: 16, 
+                              fontSize: '0.6rem',
+                              bgcolor: r.surface === '芝' ? '#dcfce7' : '#fef3c7',
+                              color: r.surface === '芝' ? '#047857' : '#92400e',
+                              borderColor: r.surface === '芝' ? '#047857' : '#92400e'
+                            }}
+                          />
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            {r.distance}m
+                          </Typography>
+                          {r.time && (
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              {formatRaceTime(r.time)}
+                            </Typography>
+                          )}
+                          <Chip 
+                            label={r.going} 
+                            size="small" 
+                            variant="outlined"
+                            sx={{ 
+                              height: 16, 
+                              fontSize: '0.6rem',
+                              bgcolor: r.going === '良' ? '#ecfdf5' : r.going === '不良' ? '#fee2e2' : '#fff7ed',
+                              color: r.going === '良' ? '#047857' : r.going === '不良' ? '#b91c1c' : '#9a3412',
+                              borderColor: r.going === '良' ? '#047857' : r.going === '不良' ? '#b91c1c' : '#9a3412'
+                            }}
+                          />
+                        </Box>
+                        
+                        {/* 出走情報・通過・上り */}
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            {r.fieldSize}頭 {r.jockey} {r.weightCarried}kg
+                          </Typography>
+                          {r.passing && (
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              通過{r.passing} 上り{r.last3F}
+                            </Typography>
+                          )}
+                          {!r.passing && r.last3F && (
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              上り{r.last3F}
+                            </Typography>
+                          )}
+                        </Box>
+                        
+                        {/* 着順 */}
+                        <Typography 
+                          variant="caption" 
+                          sx={{ 
+                            fontWeight: 700, 
+                            color: 'text.primary',
+                            fontSize: '0.8rem'
+                          }}
+                        >
+                          {r.position}着
+                        </Typography>
+                      </Box>
                     </TableCell>
                   );
                 })}

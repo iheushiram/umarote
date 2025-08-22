@@ -18,11 +18,14 @@ import {
 } from '@mui/material';
 import { Upload, FileText, Check, X } from 'lucide-react';
 import { createAdminService } from '../../services/adminService';
+import { generateRaceId, VENUE_ID_MAP } from '../../utils/raceUtils';
 
 interface RaceData {
   raceId: string;
   date: string;
   venue: string;
+  meetingNumber: number; // 開催回数
+  dayNumber: number;     // 開催日数  
   raceNo: number;
   raceName: string;
   className: string;
@@ -66,22 +69,48 @@ export default function RaceCsvUpload() {
       const headers = lines[0].split(',').map(h => h.trim());
       
       const errors: string[] = [];
-      const expectedHeaders = ['raceId', 'date', 'venue', 'raceNo', 'raceName', 'className', 'surface', 'distance', 'direction', 'trackCond'];
+      const expectedHeaders = ['date', 'venue', 'meetingNumber', 'dayNumber', 'raceNo', 'raceName', 'className', 'surface', 'distance', 'direction', 'trackCond'];
       
       if (!expectedHeaders.every(header => headers.includes(header))) {
         errors.push(`必要なヘッダー: ${expectedHeaders.join(', ')}`);
       }
       
+      // 会場名の変換マッピング
+      const venueMapping: Record<string, string> = {
+        '札': '札幌',
+        '函': '函館',
+        '新': '新潟',
+        '東': '東京',
+        '中': '中山',
+        '中京': '中京',
+        '京': '京都',
+        '阪': '阪神',
+        '小': '小倉'
+      };
+      
       const data: RaceData[] = [];
-      for (let i = 1; i < Math.min(lines.length, 11); i++) {
+      for (let i = 1; i < lines.length; i++) {
         const values = lines[i].split(',').map(v => v.trim());
         if (values.length >= expectedHeaders.length) {
           try {
+            const date = values[headers.indexOf('date')];
+            const shortVenue = values[headers.indexOf('venue')];
+            const venue = venueMapping[shortVenue] || shortVenue; // 短縮名を完全名に変換
+            const meetingNumber = parseInt(values[headers.indexOf('meetingNumber')]);
+            const dayNumber = parseInt(values[headers.indexOf('dayNumber')]);
+            const raceNo = parseInt(values[headers.indexOf('raceNo')]);
+            
+            // レースIDを自動生成
+            const year = new Date(date).getFullYear();
+            const raceId = generateRaceId(year, venue, meetingNumber, dayNumber, raceNo);
+            
             const raceData: RaceData = {
-              raceId: values[headers.indexOf('raceId')],
-              date: values[headers.indexOf('date')],
-              venue: values[headers.indexOf('venue')],
-              raceNo: parseInt(values[headers.indexOf('raceNo')]),
+              raceId,
+              date,
+              venue,
+              meetingNumber,
+              dayNumber,
+              raceNo,
               raceName: values[headers.indexOf('raceName')],
               className: values[headers.indexOf('className')],
               surface: values[headers.indexOf('surface')] as '芝' | 'ダート',
@@ -96,6 +125,10 @@ export default function RaceCsvUpload() {
               weather: headers.includes('weather') ? values[headers.indexOf('weather')] : undefined,
             };
             
+            if (!VENUE_ID_MAP[venue]) {
+              errors.push(`行 ${i + 1}: 不明な競馬場「${venue}」です`);
+            }
+            
             if (!['芝', 'ダート'].includes(raceData.surface)) {
               errors.push(`行 ${i + 1}: コース種別は「芝」「ダート」のいずれかである必要があります`);
             }
@@ -106,6 +139,14 @@ export default function RaceCsvUpload() {
             
             if (!['良', '稍', '重', '不良'].includes(raceData.trackCond)) {
               errors.push(`行 ${i + 1}: 馬場状態は「良」「稍」「重」「不良」のいずれかである必要があります`);
+            }
+            
+            if (meetingNumber < 1 || meetingNumber > 6) {
+              errors.push(`行 ${i + 1}: 開催回数は1-6の範囲である必要があります`);
+            }
+            
+            if (dayNumber < 1 || dayNumber > 12) {
+              errors.push(`行 ${i + 1}: 開催日数は1-12の範囲である必要があります`);
             }
             
             data.push(raceData);
@@ -126,7 +167,7 @@ export default function RaceCsvUpload() {
     
     setIsUploading(true);
     try {
-      const adminService = createAdminService();
+      const adminService = createAdminService(true); // APIモードで呼び出し
       await adminService.insertRaces(previewData.map(race => ({
         ...race,
         win5: false,
@@ -158,9 +199,11 @@ export default function RaceCsvUpload() {
           </Typography>
           
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            必須項目: raceId, date, venue, raceNo, raceName, className, surface, distance, direction, trackCond
+            必須項目: date, venue, meetingNumber, dayNumber, raceNo, raceName, className, surface, distance, direction, trackCond
             <br />
             オプション項目: courseConf, cushionValue, fieldSize, offAt, grade, weather
+            <br />
+            ※ raceIdは自動生成されます (YYYY + 競馬場ID + 開催回数 + 開催日数 + R数)
           </Typography>
 
           <Box sx={{ mb: 2 }}>
@@ -235,7 +278,7 @@ export default function RaceCsvUpload() {
                     <TableRow>
                       <TableCell>レースID</TableCell>
                       <TableCell>日付</TableCell>
-                      <TableCell>競馬場</TableCell>
+                      <TableCell>開催</TableCell>
                       <TableCell>R</TableCell>
                       <TableCell>レース名</TableCell>
                       <TableCell>クラス</TableCell>
@@ -249,7 +292,7 @@ export default function RaceCsvUpload() {
                       <TableRow key={index}>
                         <TableCell>{race.raceId}</TableCell>
                         <TableCell>{race.date}</TableCell>
-                        <TableCell>{race.venue}</TableCell>
+                        <TableCell>{race.meetingNumber}回{race.venue}{race.dayNumber}日</TableCell>
                         <TableCell>{race.raceNo}R</TableCell>
                         <TableCell>{race.raceName}</TableCell>
                         <TableCell>{race.className}</TableCell>

@@ -1,3 +1,4 @@
+import React from 'react';
 import {
   Typography,
   Paper,
@@ -13,6 +14,7 @@ import {
 } from '@mui/material'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useHorseStore } from '../store/horseStore'
+import { formatRaceTime } from '../utils/timeUtils'
 
 const HorseDetail = () => {
   const { id } = useParams<{ id: string }>()
@@ -44,7 +46,7 @@ const HorseDetail = () => {
         <Stack direction="row" flexWrap="wrap" gap={4}>
           <Box sx={{ minWidth: 200 }}>
             <Typography variant="subtitle2" color="text.secondary">生年</Typography>
-            <Typography>{horse.birthYear}年</Typography>
+            <Typography>{horse.birthDate?.substring(0, 4)}年</Typography>
           </Box>
           <Box sx={{ minWidth: 200 }}>
             <Typography variant="subtitle2" color="text.secondary">性別</Typography>
@@ -104,7 +106,7 @@ const HorseDetail = () => {
                 <TableCell>{result.distance}m</TableCell>
                 <TableCell>{result.finishPosition}着</TableCell>
                 <TableCell>{result.jockey}</TableCell>
-                <TableCell>{result.time}</TableCell>
+                <TableCell>{formatRaceTime(result.time)}</TableCell>
                 <TableCell>{result.odds}</TableCell>
                 <TableCell>{result.popularity}番人気</TableCell>
               </TableRow>

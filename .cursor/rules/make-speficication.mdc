@@ -229,6 +229,46 @@ src/
 - マニフェストファイルの設定
 - オフライン対応と遅延読み込み
 
+## Container & Presentation パターン運用ルールを順守する
+
+
+### 目的
+- **UI とロジックの責務分離**により、再利用性・テスト容易性・可読性を高める。
+- **型安全**かつ**副作用の局所化**を徹底し、変更影響範囲を最小化する。
+
+
+### 定義
+- **Presentation Component（以下: Presentational）**
+  - 役割: **見た目**と**ユーザー操作宣言（onXxx）**のみ。
+  - データ取得、副作用、ルーティング、状態管理は**持たない**。
+  - `props` 経由で値/イベントを受け取り、**純粋関数的**に描画。
+  - 例: `UserCard.tsx`, `FormDialog.tsx`
+
+- **Container Component（以下: Container）**
+  - 役割: **データ取得・状態管理・副作用・ルーティング連携**。
+  - Presentational に必要最小限の `props` を**組み立てて渡す**。
+  - 例: `UserCardContainer.tsx`, `FormDialogContainer.tsx`
+
+### ディレクトリ & 命名規約
+
+```
+/src/components/
+/UserCard/
+UserCard.tsx // Presentational（必須）
+UserCardContainer.tsx // Container（必要時）
+UserCard.stories.tsx // Storybook（任意）
+UserCard.test.tsx // テスト
+index.ts // export まとめ
+```
+
+- ファイル名は **パスカルケース**。Container は `FooContainer.tsx`。
+- 外部公開は `index.ts` から行い、**基本は Container を既定輸出**、Presentational を名前付き輸出:
+  ```ts
+  // index.ts
+  export { default } from "./UserCardContainer";
+  export { UserCard } from "./UserCard";
+  export type { UserCardProps } from "./UserCard";
+ ```
 ---
 
 *このドキュメントはReactアプリケーション開発の基本原則をカバーしています。プロジェクトの特性や要件に合わせて適宜調整してください。*

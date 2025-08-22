@@ -1,7 +1,7 @@
 export interface Horse {
   id: string;
   name: string;
-  birthYear: number;
+  birthDate: string;
   sex: '牡' | '牝' | 'セ';
   color: string;
   father: string;
@@ -44,9 +44,11 @@ export interface HorseWithResults extends Horse {
 
 // レース基本情報
 export interface Race {
-  raceId: string; // YYYYMMDD-<venue>-<R>
+  raceId: string; // YYYY + 競馬場ID + 開催回数 + 開催日数 + R数 (例: 202505010811)
   date: string; // YYYY-MM-DD
   venue: string; // 札幌/東京/等
+  meetingNumber: number; // 開催回数（1-6）
+  dayNumber: number; // 開催日数（1-12）
   raceNo: number; // 1-12
   raceName: string;
   className: string; // 3歳未勝利, 2勝クラス, OP, G3等

@@ -15,6 +15,7 @@ import {
   Button
 } from '@mui/material';
 import { ArrowLeft } from 'lucide-react';
+import { formatRaceTime } from '../utils/timeUtils';
 
 type Row = {
   pos: number;
@@ -116,7 +117,7 @@ export default function RaceResultsPage() {
                 <TableCell>{r.sexAge}</TableCell>
                 <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.carried}</TableCell>
                 <TableCell>{r.jockey}</TableCell>
-                <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.time}</TableCell>
+                <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatRaceTime(r.time)}</TableCell>
                 <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.diff}</TableCell>
                 <TableCell>{r.pass}</TableCell>
                 <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.last3F}</TableCell>

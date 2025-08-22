@@ -16,6 +16,7 @@ import { Upload, Database, FileText } from 'lucide-react';
 import HorseCsvUpload from '../components/admin/HorseCsvUpload';
 import RaceCsvUpload from '../components/admin/RaceCsvUpload';
 import RaceResultCsvUpload from '../components/admin/RaceResultCsvUpload';
+import RaceEntryCsvUpload from '../components/admin/RaceEntryCsvUpload';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -78,12 +79,8 @@ export default function AdminPage() {
               iconPosition="start"
               {...a11yProps(1)} 
             />
-            <Tab 
-              label="レース結果" 
-              icon={<Upload size={16} />} 
-              iconPosition="start"
-              {...a11yProps(2)} 
-            />
+            <Tab label="レース結果" icon={<Upload size={16} />} iconPosition="start" {...a11yProps(2)} />
+            <Tab label="出馬表" icon={<Upload size={16} />} iconPosition="start" {...a11yProps(3)} />
           </Tabs>
         </Box>
         
@@ -97,6 +94,9 @@ export default function AdminPage() {
         
         <TabPanel value={tabValue} index={2}>
           <RaceResultCsvUpload />
+        </TabPanel>
+        <TabPanel value={tabValue} index={3}>
+          <RaceEntryCsvUpload />
         </TabPanel>
       </Paper>
     </Box>

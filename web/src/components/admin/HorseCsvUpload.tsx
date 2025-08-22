@@ -18,11 +18,12 @@ import {
 } from '@mui/material';
 import { Upload, FileText, Check, X } from 'lucide-react';
 import { createAdminService } from '../../services/adminService';
+import { generateHorseId } from '../../utils/csvMapping';
 
 interface HorseData {
   id: string;
   name: string;
-  birthYear: number;
+  birthDate: string;
   sex: '牡' | '牝' | 'セ';
   color: string;
   father: string;
@@ -31,6 +32,7 @@ interface HorseData {
   owner: string;
   breeder: string;
   earnings: number;
+  currentRaceId?: string; // 現在出走予定のレースID（任意）
 }
 
 export default function HorseCsvUpload() {
@@ -55,39 +57,177 @@ export default function HorseCsvUpload() {
 
   const parseCsvFile = (file: File) => {
     const reader = new FileReader();
+
     reader.onload = (e) => {
       const csvText = e.target?.result as string;
-      const lines = csvText.split('\n').filter(line => line.trim());
-      const headers = lines[0].split(',').map(h => h.trim());
+
+      // 文字化けチェック
+      const hasGarbledText = !/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(csvText);
+
+      if (hasGarbledText) {
+        // UTF-8で再読み込み
+        const utf8Reader = new FileReader();
+        utf8Reader.onload = (e2) => {
+          const utf8Text = e2.target?.result as string;
+          processCsvText(utf8Text);
+        };
+        utf8Reader.readAsText(file, 'UTF-8');
+      } else {
+        processCsvText(csvText);
+      }
+    };
+
+    reader.readAsText(file, 'Shift-JIS'); // 日本語CSVファイルはShift-JISの可能性が高い
+
+    function processCsvText(decodedText: string) {
+      const lines = decodedText.split(/\r?\n/).filter(line => line.trim());
+
+      // クォート対応のCSV分割
+      const splitCsvLine = (line: string): string[] => {
+        const result: string[] = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+              current += '"';
+              i++;
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (ch === ',' && !inQuotes) {
+            result.push(current.trim());
+            current = '';
+          } else {
+            current += ch;
+          }
+        }
+        result.push(current.trim());
+        return result;
+      };
+
+      const headers = splitCsvLine(lines[0]).map(h => h.trim());
       
       const errors: string[] = [];
       const expectedHeaders = ['id', 'name', 'birthYear', 'sex', 'color', 'father', 'mother', 'trainer', 'owner', 'breeder', 'earnings'];
       
-      if (!expectedHeaders.every(header => headers.includes(header))) {
-        errors.push(`必要なヘッダー: ${expectedHeaders.join(', ')}`);
+      // 日本語CSV判定
+      const japaneseHeaders = ['馬名', '性別', '年齢'];
+      const headerLine = lines[0];
+      const isJapaneseCsv = /[^\x00-\x7F]/.test(headerLine) || japaneseHeaders.some(h => headers.includes(h));
+
+      if (!isJapaneseCsv) {
+        if (!expectedHeaders.every(header => headers.includes(header))) {
+          errors.push(`必要なヘッダー: ${expectedHeaders.join(', ')}`);
+        }
+        
+        // 英語CSVでも血統登録番号をチェック
+        if (!headers.includes('pedigreeNumber') && !headers.includes('pedigree_number')) {
+          errors.push('血統登録番号（pedigreeNumber）が必要です');
+        }
       }
       
       const data: HorseData[] = [];
-      for (let i = 1; i < Math.min(lines.length, 11); i++) {
-        const values = lines[i].split(',').map(v => v.trim());
-        if (values.length === headers.length) {
+      for (let i = 1; i < lines.length; i++) {
+        const values = splitCsvLine(lines[i]);
+        if (values.length >= Math.min(headers.length, 3)) {
           try {
-            const horseData: HorseData = {
-              id: values[headers.indexOf('id')],
-              name: values[headers.indexOf('name')],
-              birthYear: parseInt(values[headers.indexOf('birthYear')]),
-              sex: values[headers.indexOf('sex')] as '牡' | '牝' | 'セ',
-              color: values[headers.indexOf('color')],
-              father: values[headers.indexOf('father')],
-              mother: values[headers.indexOf('mother')],
-              trainer: values[headers.indexOf('trainer')],
-              owner: values[headers.indexOf('owner')],
-              breeder: values[headers.indexOf('breeder')],
-              earnings: parseFloat(values[headers.indexOf('earnings')] || '0'),
-            };
-            
-            if (!['牡', '牝', 'セ'].includes(horseData.sex)) {
-              errors.push(`行 ${i + 1}: 性別は「牡」「牝」「セ」のいずれかである必要があります`);
+            let horseData: HorseData;
+
+            if (isJapaneseCsv) {
+              // ヘッダー->値の辞書
+              const row: Record<string, string> = {};
+              headers.forEach((h, idx) => { row[h] = values[idx] || ''; });
+
+              const name = row['馬名'] || '';
+              const sexRaw = (row['性別'] || '').trim();
+              const sex = (sexRaw === '牡' || sexRaw === '牝') ? sexRaw : (sexRaw === '騙' ? 'セ' : ('' as any));
+
+              // 血統登録番号を取得
+              const pedigreeNumber = row['血統登録番号'] || row['血統番号'] || row['登録番号'] || '';
+              if (!pedigreeNumber) {
+                errors.push(`行 ${i + 1}: 血統登録番号が必要です`);
+                continue;
+              }
+
+              // 生年を取得（生年月日または年齢から推定）
+              const birthDate = row['生年月日'] || '';
+              let birthDateValue: any = '';
+              if (birthDate) {
+                // 生年月日を8桁のYYYYMMDD形式に変換（YYYY.MM.DD形式、スペース対応）
+                const parts = birthDate.replace(/\s+/g, '').split('.');
+                if (parts.length >= 3) {
+                  const year = parts[0].padStart(4, '0');
+                  const month = parts[1].padStart(2, '0');
+                  const day = parts[2].padStart(2, '0');
+                  birthDateValue = `${year}${month}${day}`;
+                } else {
+                  birthDateValue = birthDate.replace(/\.\s*/g, '').replace(/\s+/g, '');
+                }
+              } else {
+                // 年齢から推定
+                const date = (row['日付'] || '').trim();
+                const ageStr = (row['年齢'] || '').trim();
+                if (/^\d{6}$/.test(date) && /^\d+$/.test(ageStr)) {
+                  const year = 2000 + parseInt(date.slice(0, 2), 10);
+                  const age = parseInt(ageStr, 10);
+                  birthDateValue = `${year - age + 1}0101`.padStart(8, '0');
+                }
+              }
+
+              const id = generateHorseId(pedigreeNumber);
+              const trainer = (row['調教師'] || '').replace(/^\((?:栗|美)\)\s*/, '');
+              const earnings = (() => { const v = (row['賞金'] || '').replace(/[^\d.]/g, ''); return v ? parseFloat(v) : 0; })();
+
+              // 血統情報を抽出
+              const father = row['種牡馬'] || row['父'] || row['父馬'] || '';
+              const mother = row['母馬'] || row['母'] || '';
+              const owner = row['馬主'] || row['オーナー'] || '';
+              const breeder = row['生産者'] || row['ブリーダー'] || '';
+
+              horseData = {
+                id: id as any,
+                name: name as any,
+                birthDate: birthDateValue as any,
+                sex: sex as any,
+                color: '' as any,
+                father: father as any,
+                mother: mother as any,
+                trainer: trainer as any,
+                owner: owner as any,
+                breeder: breeder as any,
+                earnings: earnings as any,
+                currentRaceId: undefined,
+              };
+            } else {
+              // 英語CSVの場合、血統登録番号からIDを生成
+              const pedigreeNumber = values[headers.indexOf('pedigreeNumber')] || values[headers.indexOf('pedigree_number')] || '';
+              if (!pedigreeNumber) {
+                errors.push(`行 ${i + 1}: 血統登録番号が必要です`);
+                continue;
+              }
+              
+              horseData = {
+                id: generateHorseId(pedigreeNumber),
+                name: values[headers.indexOf('name')],
+                birthDate: values[headers.indexOf('birthDate')] || values[headers.indexOf('birth_year')] || '',
+                sex: values[headers.indexOf('sex')] as '牡' | '牝' | 'セ',
+                color: values[headers.indexOf('color')],
+                father: values[headers.indexOf('father')],
+                mother: values[headers.indexOf('mother')],
+                trainer: values[headers.indexOf('trainer')],
+                owner: values[headers.indexOf('owner')],
+                breeder: values[headers.indexOf('breeder')],
+                earnings: parseFloat(values[headers.indexOf('earnings')] || '0'),
+                currentRaceId: headers.includes('currentRaceId') ? values[headers.indexOf('currentRaceId')] || undefined : undefined,
+              };
+            }
+
+            if (!isJapaneseCsv) {
+              if (!['牡', '牝', 'セ'].includes(horseData.sex)) {
+                errors.push(`行 ${i + 1}: 性別は「牡」「牝」「セ」のいずれかである必要があります`);
+              }
             }
             
             data.push(horseData);
@@ -100,7 +240,6 @@ export default function HorseCsvUpload() {
       setPreviewData(data);
       setValidationErrors(errors);
     };
-    reader.readAsText(file);
   };
 
   const handleUpload = async () => {
@@ -108,7 +247,7 @@ export default function HorseCsvUpload() {
     
     setIsUploading(true);
     try {
-      const adminService = createAdminService();
+      const adminService = createAdminService(true); // APIモードで呼び出し
       await adminService.insertHorses(previewData);
       
       setUploadStatus('success');
@@ -136,7 +275,9 @@ export default function HorseCsvUpload() {
           </Typography>
           
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            CSV形式: id, name, birthYear, sex, color, father, mother, trainer, owner, breeder, earnings
+            必須項目: id, name, birthYear, sex, color, father, mother, trainer, owner, breeder, earnings
+            <br />
+            オプション項目: currentRaceId（現在出走予定のレースID）
           </Typography>
 
           <Box sx={{ mb: 2 }}>
@@ -224,7 +365,7 @@ export default function HorseCsvUpload() {
                       <TableRow key={index}>
                         <TableCell>{horse.id}</TableCell>
                         <TableCell>{horse.name}</TableCell>
-                        <TableCell>{horse.birthYear}</TableCell>
+                        <TableCell>{horse.birthDate}</TableCell>
                         <TableCell>
                           <Chip 
                             label={horse.sex} 
