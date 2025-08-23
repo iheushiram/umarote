@@ -72,6 +72,7 @@ export const raceResults = sqliteTable('race_results', {
   weather: text('weather'),
   courseCondition: text('course_condition', { enum: ['良', '稍', '重', '不良'] }).notNull(),
   trackConditionId: text('track_condition_id').references(() => trackConditions.id), // 外部キー（NULL許容）
+  pos1c: integer('pos1c'),
   finishPosition: integer('finish_position'),
   jockey: text('jockey').notNull(),
   weight: real('weight').notNull(),
@@ -80,8 +81,10 @@ export const raceResults = sqliteTable('race_results', {
   pos2c: integer('pos2c'),
   pos3c: integer('pos3c'),
   pos4c: integer('pos4c'),
+  cornerPassings: text('corner_passings'),
   averagePosition: real('average_position').notNull(),
   lastThreeFurlong: text('last_three_furlong').notNull(),
+  averageThreeFurlong: text('average_three_furlong'),
   odds: real('odds').notNull(),
   popularity: integer('popularity').notNull(),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),

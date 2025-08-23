@@ -549,6 +549,12 @@ export function processJapaneseCsvRow(
     })(),
     direction: direction,
     courseCondition: courseCondition || '良',
+    // 新規: 1角通過順
+    pos1c: (() => {
+      const c1 = rowData['1角'] || rowData['１角'] || '';
+      const v = c1 && c1 !== '----' ? parseInt(normalizeDigits(c1)) : null;
+      return Number.isFinite(v as any) ? v : null;
+    })(),
     finishPosition: (() => { 
       const v = rowData['着順'] || '';
       // '----'の場合はnullを返す（レース未確定）
@@ -581,6 +587,13 @@ export function processJapaneseCsvRow(
       console.log(`通過順4角処理: 元の値="${c4}", 正規化後="${normalizeDigits(c4)}", 結果=${c4 && c4 !== '----' ? parseInt(normalizeDigits(c4)) : null}`);
       return c4 && c4 !== '----' ? parseInt(normalizeDigits(c4)) : null;
     })(),
+    // 新規: ｺｰﾅｰ（通過順まとめ文字列）
+    cornerPassings: (() => {
+      const aggregate = rowData['ｺｰﾅｰ'] || rowData['コーナー'] || rowData['通過'] || '';
+      // 代表的表記例: "1-1-1-1" や "6-6-5-4"。そのまま保持。
+      const value = (aggregate || '').replace(/\s+/g, '');
+      return value || null;
+    })(),
     averagePosition: (() => {
       const c2 = rowData['2角'] || '';
       const c3 = rowData['3角'] || '';
@@ -588,6 +601,12 @@ export function processJapaneseCsvRow(
       return (c2 || c3 || c4) ? averagePosition : 0;
     })(),
     lastThreeFurlong: rowData['上り3F'] || '',
+    // 新規: Ave-3F（平均3F）
+    averageThreeFurlong: (() => {
+      const ave = rowData['Ave-3F'] || rowData['AVE-3F'] || rowData['平均3F'] || '';
+      const cleaned = ave.replace(/\s+/g, '');
+      return cleaned || null;
+    })(),
     odds: odds || 0,
     popularity: (() => { const p = normalizeDigits(rowData['人気'] || ''); return p ? parseInt(p) : 0; })(),
     // 馬の基本情報

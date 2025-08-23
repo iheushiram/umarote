@@ -19,7 +19,7 @@ import { ArrowLeft } from "lucide-react";
 import { HorseEntry } from '../types/horse';
 import { parseRaceId, formatRaceIdDisplay } from '../utils/raceUtils';
 import { AdminService, RaceResultData } from '../services/adminService';
-import { formatRaceTime } from '../utils/timeUtils';
+import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
 
 export default function HorseRacingTable() {
   const { raceId } = useParams<{ raceId: string }>();
@@ -103,6 +103,7 @@ export default function HorseRacingTable() {
               barrier: 0,
               position: r.finishPosition,
               time: r.time,
+              timeRaw: r.timeRaw || r.time, // 計算用の元データ
               last3F: r.lastThreeFurlong,
               passing: (() => {
                 const passingArray = [r.pos2c, r.pos3c, r.pos4c];
@@ -399,6 +400,11 @@ export default function HorseRacingTable() {
                           {r.time && (
                             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                               {formatRaceTime(r.time)}
+                              {r.distance && r.timeRaw && (
+                                <span style={{ marginLeft: '4px', whiteSpace: 'nowrap' }}>
+                                  ({calculateAverageSpeed(r.distance, r.time)} km/h)
+                                </span>
+                              )}
                             </Typography>
                           )}
                           <Chip 

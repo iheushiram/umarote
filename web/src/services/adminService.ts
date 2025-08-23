@@ -51,13 +51,18 @@ export interface RaceResultData {
   distance: number;
   direction: '右' | '左';
   courseCondition: '良' | '稍' | '重' | '不良';
+  pos1c?: number; // 1角
   finishPosition: number;
   jockey: string;
   weight: number;
   time: string;
+  timeFormatted?: string; // 表示用タイム（"1:43.9"形式）
+  timeRaw?: number; // 計算用タイム（1439形式）
   margin: string;
   averagePosition: number;
   lastThreeFurlong: string;
+  cornerPassings?: string; // ｺｰﾅｰ（通過順まとめ）
+  averageThreeFurlong?: string; // Ave-3F
   odds: number;
   popularity: number;
   pos2c?: number;
@@ -507,10 +512,10 @@ export class MockAdminService {
       return true;
     });
 
-    // タイム変換を適用
+    // 元の数値タイムを保持
     const processedResults = filtered.map((result: any) => ({
       ...result,
-      time: formatRaceTime(result.time)
+      timeRaw: result.time // 計算用（元の数値）
     }));
 
     return typeof limit === 'number' && limit > 0 ? processedResults.slice(0, limit) : processedResults;

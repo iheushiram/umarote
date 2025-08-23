@@ -203,6 +203,7 @@ app.post('/api/race-results', async (c) => {
             weather: resultData.weather,
             courseCondition: resultData.courseCondition,
 
+            pos1c: (resultData as any).pos1c,
             finishPosition: resultData.finishPosition,
             jockey: resultData.jockey,
             weight: resultData.weight,
@@ -211,8 +212,10 @@ app.post('/api/race-results', async (c) => {
             pos2c: resultData.pos2c,
             pos3c: resultData.pos3c,
             pos4c: resultData.pos4c,
+            cornerPassings: (resultData as any).cornerPassings,
             averagePosition: resultData.averagePosition,
             lastThreeFurlong: resultData.lastThreeFurlong,
+            averageThreeFurlong: (resultData as any).averageThreeFurlong,
             odds: resultData.odds,
             popularity: resultData.popularity,
             updatedAt: sql`CURRENT_TIMESTAMP`
@@ -460,6 +463,7 @@ app.post('/api/race-results-with-horses', async (c) => {
             weather: resultData.weather,
             courseCondition: resultData.courseCondition,
 
+            pos1c: (resultData as any).pos1c,
             finishPosition: resultData.finishPosition,
             jockey: resultData.jockey,
             weight: resultData.weight,
@@ -468,8 +472,10 @@ app.post('/api/race-results-with-horses', async (c) => {
             pos2c: resultData.pos2c,
             pos3c: resultData.pos3c,
             pos4c: resultData.pos4c,
+            cornerPassings: (resultData as any).cornerPassings,
             averagePosition: resultData.averagePosition,
             lastThreeFurlong: resultData.lastThreeFurlong,
+            averageThreeFurlong: (resultData as any).averageThreeFurlong,
             odds: resultData.odds,
             popularity: resultData.popularity,
             updatedAt: sql`CURRENT_TIMESTAMP`

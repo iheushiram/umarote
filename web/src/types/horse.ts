@@ -24,6 +24,7 @@ export interface RaceResult {
   weather: string;
   courseCondition: '良' | '稍' | '重' | '不良';
   cushionValue?: number; // クッション値（芝のみ）
+  pos1c?: number; // 1角通過順
   finishPosition: number;
   jockey: string;
   weight: number;
@@ -32,8 +33,10 @@ export interface RaceResult {
   pos2c?: number; // 2角通過順
   pos3c?: number; // 3角通過順  
   pos4c?: number; // 4角通過順
+  cornerPassings?: string; // ｺｰﾅｰ（通過順まとめ）
   averagePosition: number;
   lastThreeFurlong: string;
+  averageThreeFurlong?: string; // Ave-3F
   odds: number;
   popularity: number;
 }
@@ -139,6 +142,7 @@ export interface RaceDetail {
   barrier: number; // 枠番
   position: number; // 着順
   time: string; // タイム
+  timeRaw?: number; // 計算用タイム（1439形式）
   last3F: string; // 上り3F
   passing: string; // 通過順（例: 13-7-5）
   jockey: string;

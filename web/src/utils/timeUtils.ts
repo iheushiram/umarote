@@ -58,6 +58,50 @@ export function isValidRaceTime(time: string | number): boolean {
   return !isNaN(timeNum) && timeNum > 0;
 }
 
+/**
+ * 平均速度を計算（km/h）
+ * @param distance - 距離（メートル）
+ * @param time - タイム（数値: 1275 等 もしくは '1:27.5'）
+ * @returns 平均速度（km/h、小数点1桁）
+ */
+export function calculateAverageSpeed(distance: number, time: string | number): number {
+  if (!distance || distance <= 0) {
+    return 0;
+  }
+
+  // time を秒に変換
+  let secondsTotal = 0;
+  if (typeof time === 'number') {
+    // 例: 1275 -> 1分27秒5
+    const minutes = Math.floor(time / 1000);
+    const secTenth = time % 1000; // 例: 275
+    const seconds = Math.floor(secTenth / 10); // 27
+    const tenth = secTenth % 10; // 5
+    secondsTotal = minutes * 60 + seconds + tenth / 10;
+  } else if (typeof time === 'string' && time.includes(':')) {
+    // 例: '1:27.5'
+    const [m, s] = time.split(':');
+    secondsTotal = (parseFloat(m) || 0) * 60 + (parseFloat(s) || 0);
+  } else {
+    const parsed = parseInt(time as string, 10);
+    if (!isNaN(parsed)) {
+      const minutes = Math.floor(parsed / 1000);
+      const secTenth = parsed % 1000;
+      const seconds = Math.floor(secTenth / 10);
+      const tenth = secTenth % 10;
+      secondsTotal = minutes * 60 + seconds + tenth / 10;
+    }
+  }
+
+  if (secondsTotal <= 0) {
+    return 0;
+  }
+
+  // 距離（m）÷ タイム（秒）× 3.6 = km/h
+  const speed = (distance / secondsTotal) * 3.6;
+  return Math.round(speed * 10) / 10; // 小数点1桁に丸める
+}
+
 // テスト用の関数（開発時のみ使用）
 if ((import.meta as any).env?.DEV) {
   console.log('=== Time Format Test ===');
@@ -67,5 +111,12 @@ if ((import.meta as any).env?.DEV) {
   console.log('60 →', formatRaceTime(60));     // 6.0
   console.log('439 →', formatRaceTime(439));   // 43.9
   console.log('0 →', formatRaceTime(0));       // ''
-  console.log('=== End Test ===');
+  console.log('=== End Time Format Test ===');
+
+  console.log('=== Average Speed Test ===');
+  console.log('2000m, 1275 →', calculateAverageSpeed(2000, 1275), 'km/h'); // 59.5 km/h 相当
+  console.log('1700m,  990 →', calculateAverageSpeed(1700, 990), 'km/h');  // 61.8 km/h 相当
+  console.log('1200m,  690 →', calculateAverageSpeed(1200, 690), 'km/h');  // 62.6 km/h 相当
+  console.log('1800m, 1439 →', calculateAverageSpeed(1800, 1439), 'km/h'); // 数値形式テスト
+  console.log('=== End Average Speed Test ===');
 }
