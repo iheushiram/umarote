@@ -23,3 +23,21 @@ dist-ssr
 *.sln
 *.sw?
 
+# Cloudflare Wrangler
+.wrangler/
+
+# 環境変数
+.env
+.env.*
+.dev.vars
+
+# TypeScript ビルド情報
+*.tsbuildinfo
+
+# Lint/テスト成果物
+.eslintcache
+coverage/
+
+# OS 由来
+Thumbs.db
+Desktop.ini
