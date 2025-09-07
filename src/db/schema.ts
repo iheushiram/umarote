@@ -9,6 +9,7 @@ export const horses = sqliteTable('horses', {
   color: text('color').notNull(),
   father: text('father').notNull(),
   mother: text('mother').notNull(),
+  maternalGrandfather: text('maternal_grandfather'),
   trainer: text('trainer').notNull(),
   owner: text('owner').notNull(),
   breeder: text('breeder').notNull(),
@@ -87,6 +88,9 @@ export const raceResults = sqliteTable('race_results', {
   averageThreeFurlong: text('average_three_furlong'),
   odds: real('odds').notNull(),
   popularity: integer('popularity').notNull(),
+  // 賞金情報
+  prizeMoney: integer('prize_money'),
+  earnedMoney: integer('earned_money'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
 });

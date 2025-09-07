@@ -1,0 +1,1 @@
+ALTER TABLE `horses` ADD `maternal_grandfather` text;

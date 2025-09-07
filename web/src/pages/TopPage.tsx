@@ -15,11 +15,14 @@ import {
   MenuItem,
   CircularProgress,
   Alert,
-  Paper
+  Paper,
+  Collapse,
+  useMediaQuery
 } from '@mui/material';
-import { ChevronLeft, ChevronRight, CalendarDays, Cloud, Sun } from 'lucide-react';
+import { useTheme } from '@mui/material/styles';
+import { ChevronLeft, ChevronRight, CalendarDays, Cloud, Sun, ChevronDown, ChevronUp } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { VenueBoard, Race } from '../types/horse';
 import { getAvailableDates, getRacesByDate, getRaceEntriesByDate } from '../services/horseService';
 import { RaceData } from '../services/adminService';
@@ -271,9 +274,11 @@ interface VenueColumnProps {
   weather?: string;
   trackCond?: string;
   onRaceClick: (raceId: string) => void;
+  isMobile?: boolean;
 }
 
-const VenueColumn = ({ venue, meetStr, races, entries, weather, trackCond, onRaceClick }: VenueColumnProps) => {
+const VenueColumn = ({ venue, meetStr, races, entries, weather, trackCond, onRaceClick, isMobile = false }: VenueColumnProps) => {
+  const [collapsed, setCollapsed] = React.useState(false);
   const getWeatherIcon = (weather?: string) => {
     if (!weather) return <Sun size={16} />;
     if (weather.includes('曇') || weather.includes('雨')) return <Cloud size={16} />;
@@ -283,11 +288,28 @@ const VenueColumn = ({ venue, meetStr, races, entries, weather, trackCond, onRac
   return (
     <Paper sx={{ height: 'fit-content', p: 2 }}>
       {/* ヘッダー */}
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1 }}>
-          {meetStr}
-        </Typography>
-        
+      <Box 
+        sx={{ mb: 2, cursor: isMobile ? 'pointer' : 'default' }}
+        onClick={isMobile ? () => setCollapsed((v) => !v) : undefined}
+        role={isMobile ? 'button' : undefined}
+        aria-expanded={!collapsed}
+        aria-label={`${meetStr} のレース一覧を${collapsed ? '展開' : '折りたたみ'}`}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            mb: 1,
+            userSelect: 'none'
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+            {meetStr}
+          </Typography>
+          {isMobile && (collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />)}
+        </Box>
+
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <Typography variant="caption">天気:</Typography>
@@ -311,22 +333,33 @@ const VenueColumn = ({ venue, meetStr, races, entries, weather, trackCond, onRac
       </Box>
       
       {/* レース一覧 */}
-      <Stack spacing={0}>
-        {races.map((race) => (
-          <RaceCard 
-            key={race.raceId} 
-            race={race} 
-            entries={entries?.[race.raceId]?.entries}
-            onClick={onRaceClick}
-          />
-        ))}
-      </Stack>
+      <Collapse in={!isMobile || !collapsed} timeout="auto" unmountOnExit={isMobile}>
+        <Stack spacing={0}>
+          {races.map((race) => (
+            <RaceCard 
+              key={race.raceId} 
+              race={race} 
+              entries={entries?.[race.raceId]?.entries}
+              onClick={onRaceClick}
+            />
+          ))}
+        </Stack>
+      </Collapse>
     </Paper>
   );
 };
 
 export default function TopPage() {
-  const [selectedDate, setSelectedDate] = useState('');
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlDate = searchParams.get('date') || '';
+  const [selectedDate, setSelectedDate] = useState(() => {
+    // 初期表示時にURLの?date、次にlocalStorageから復元
+    const fromUrl = urlDate;
+    const fromStorage = typeof window !== 'undefined' ? localStorage.getItem('selectedDate') || '' : '';
+    return fromUrl || fromStorage || '';
+  });
   const [surfaceFilter, setSurfaceFilter] = useState<'all' | 'turf' | 'dirt'>('all');
   const [gradeFilter, setGradeFilter] = useState<'all' | 'stakes' | 'graded'>('all');
   const [races, setRaces] = useState<RaceData[]>([]);
@@ -339,6 +372,20 @@ export default function TopPage() {
   console.log('selectedDate:', selectedDate);
   console.log('races length:', races.length);
   console.log('raceEntries keys:', Object.keys(raceEntries));
+
+  // 選択日付をURLクエリとlocalStorageに同期
+  useEffect(() => {
+    if (!selectedDate) return;
+    // URLの?date を更新（履歴を汚さないように replace）
+    try {
+      setSearchParams({ date: selectedDate }, { replace: true } as any);
+    } catch (_) {
+      // 旧バージョン互換（replace未対応）
+      setSearchParams({ date: selectedDate } as any);
+    }
+    // 永続化（戻る・再読込対策）
+    try { localStorage.setItem('selectedDate', selectedDate); } catch {}
+  }, [selectedDate, setSearchParams]);
 
   // 会場名の変換マッピング
   const venueMapping: Record<string, string> = {
@@ -513,6 +560,7 @@ export default function TopPage() {
               weather="晴"
               trackCond="良"
               onRaceClick={handleRaceClick}
+              isMobile={isMobile}
             />
           ))}
         </Box>

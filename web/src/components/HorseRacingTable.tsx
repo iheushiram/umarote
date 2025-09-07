@@ -11,7 +11,8 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Chip
+  Chip,
+  Tooltip
 } from "@mui/material";
 import './horse-info.css';
 import { useParams, useNavigate } from "react-router-dom";
@@ -42,6 +43,7 @@ export default function HorseRacingTable() {
     surface: '芝' | 'ダート';
     direction: '右' | '左';
     cushionValue?: number;
+    date?: string;
   }>({
     raceId: raceId || '',
     raceName: '',
@@ -49,12 +51,25 @@ export default function HorseRacingTable() {
     distance: 0,
     surface: 'ダート',
     direction: '右',
-    cushionValue: undefined
+    cushionValue: undefined,
+    date: undefined
   });
 
   const [entries, setEntries] = useState<HorseEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  // レースレベル（賞金合計/平均）キャッシュ
+  type RaceLevelInfo = {
+    prizeMoney?: number;     // 合計（万円）
+    earnedMoney?: number;    // 合計（万円）
+    horseCount?: number;     // そのレースの頭数
+    avgPrize?: number;       // 平均（万円/頭）
+    avgEarned?: number;      // 平均（万円/頭）
+  };
+  const [prizeMoneyCache, setPrizeMoneyCache] = useState<Map<string, RaceLevelInfo>>(new Map());
+  const [loadingPrizeMoney, setLoadingPrizeMoney] = useState<Set<string>>(new Set());
+  // デバウンス用のタイマー
+  const [hoverTimers, setHoverTimers] = useState<Map<string, NodeJS.Timeout>>(new Map());
 
   useEffect(() => {
     const admin = new AdminService();
@@ -72,15 +87,17 @@ export default function HorseRacingTable() {
             distance: race.distance,
             surface: race.surface,
             direction: race.direction,
-            cushionValue: race.cushionValue
+            cushionValue: race.cushionValue,
+            date: race.date
           });
         }
 
         const es = await admin.getRaceEntries(raceId as string);
         // 各馬の直近レース(最大5件)も取得
         const resultsMap = new Map<string, RaceResultData[]>();
+        const beforeDate = (race && typeof race.date === 'string') ? race.date.replace(/-/g, '') : undefined;
         await Promise.all(es.map(async (e) => {
-          const res = await admin.getRaceResults(undefined, e.horseId, 5);
+          const res = await admin.getRaceResults(undefined, e.horseId, 5, beforeDate);
           resultsMap.set(e.horseId, res);
         }));
 
@@ -137,7 +154,9 @@ export default function HorseRacingTable() {
           } as HorseEntry;
         });
 
-        setEntries(mapped);
+        // 馬番号順でソート
+        const sortedEntries = mapped.sort((a, b) => a.horseNo - b.horseNo);
+        setEntries(sortedEntries);
       } catch (err) {
         console.error(err);
         setError('出馬表の読み込みに失敗しました');
@@ -155,6 +174,137 @@ export default function HorseRacingTable() {
   const turnLabels: Record<Turn, string> = { none: 'なし', left: '左回り', right: '右回り' };
   const [selectedTurn, setSelectedTurn] = useState<Turn>('left');
   const turnStats: Record<string, Record<Turn, [number, number, number, number]>> = {} as any;
+
+  // ホバー開始時にタイマーを設定する関数
+  const handlePrizeMoneyHoverStart = (raceId: string) => {
+    console.log('handlePrizeMoneyHoverStart called with raceId:', raceId);
+    
+    // 既に有効キャッシュがある場合は何もしない（合計が未定義の空キャッシュは除外）
+    if (prizeMoneyCache.has(raceId)) {
+      const cached = prizeMoneyCache.get(raceId);
+      if ((cached?.prizeMoney !== undefined) || (cached?.earnedMoney !== undefined)) {
+        console.log('Race level already cached for raceId:', raceId);
+        return;
+      }
+    }
+
+    // 既にロード中の場合は何もしない
+    if (loadingPrizeMoney.has(raceId)) {
+      console.log('Prize money already loading for raceId:', raceId);
+      return;
+    }
+
+    // 既存のタイマーをクリア
+    const existingTimer = hoverTimers.get(raceId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    // 1秒後にAPIを呼び出すタイマーを設定（過負荷防止）
+    const timer = setTimeout(async () => {
+      console.log('Timer expired, fetching prize money for raceId:', raceId);
+      
+      // ローディング状態を設定
+      setLoadingPrizeMoney(prev => new Set(prev).add(raceId));
+
+      try {
+        const admin = new AdminService();
+        console.log('Calling admin.getRaceEntries for raceId:', raceId);
+        const entries = await admin.getRaceEntries(raceId);
+        console.log('Received entries:', entries);
+
+        if (entries.length > 0) {
+          const horseCount = entries.length;
+          const e0: any = entries[0] || {};
+          const apiTotalPrize: number | undefined = e0?.prizeMoney ?? undefined;
+          const apiTotalEarned: number | undefined = e0?.earnedMoney ?? undefined;
+
+          if ((apiTotalPrize !== undefined && apiTotalPrize !== null) || (apiTotalEarned !== undefined && apiTotalEarned !== null)) {
+            const info: RaceLevelInfo = {
+              prizeMoney: typeof apiTotalPrize === 'number' ? apiTotalPrize : undefined,
+              earnedMoney: typeof apiTotalEarned === 'number' ? apiTotalEarned : undefined,
+              horseCount,
+              avgPrize: typeof apiTotalPrize === 'number' && horseCount > 0 ? Math.round((apiTotalPrize / horseCount) * 10) / 10 : undefined,
+              avgEarned: typeof apiTotalEarned === 'number' && horseCount > 0 ? Math.round((apiTotalEarned / horseCount) * 10) / 10 : undefined,
+            };
+            setPrizeMoneyCache(prev => new Map(prev).set(raceId, info));
+            console.log('Race level (from API total):', info);
+          } else {
+            // フォールバック: 参加馬ごとの過去レース結果から合計を算出
+            const raceDate: string | undefined = entries[0]?.date;
+            if (raceDate) {
+              const allResults = await Promise.all(entries.map(async (en: any) => {
+                try {
+                  const rs = await admin.getRaceResults(undefined, en.horseId, undefined, raceDate);
+                  return rs as any[];
+                } catch {
+                  return [] as any[];
+                }
+              }));
+
+              let totalPrize = 0;
+              let totalEarned = 0;
+              for (const rs of allResults) {
+                for (const r of rs) {
+                  if (typeof (r as any).prizeMoney === 'number') totalPrize += (r as any).prizeMoney;
+                  if (typeof (r as any).earnedMoney === 'number') totalEarned += (r as any).earnedMoney;
+                }
+              }
+
+              const info: RaceLevelInfo = {
+                prizeMoney: isFinite(totalPrize) ? totalPrize : undefined,
+                earnedMoney: isFinite(totalEarned) ? totalEarned : undefined,
+                horseCount,
+                avgPrize: horseCount > 0 && isFinite(totalPrize) ? Math.round((totalPrize / horseCount) * 10) / 10 : undefined,
+                avgEarned: horseCount > 0 && isFinite(totalEarned) ? Math.round((totalEarned / horseCount) * 10) / 10 : undefined,
+              };
+              setPrizeMoneyCache(prev => new Map(prev).set(raceId, info));
+              console.log('Race level (computed fallback):', info);
+            } else {
+              // 日付無し → 空キャッシュとして保持（再試行抑制）
+              setPrizeMoneyCache(prev => new Map(prev).set(raceId, {}));
+            }
+          }
+        } else {
+          // エントリ無し → 空キャッシュ
+          setPrizeMoneyCache(prev => new Map(prev).set(raceId, {}));
+        }
+      } catch (error) {
+        console.error(`Error fetching prize money for race ${raceId}:`, error);
+      } finally {
+        // ローディング状態を解除
+        setLoadingPrizeMoney(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(raceId);
+          return newSet;
+        });
+        // タイマーをクリア
+        setHoverTimers(prev => {
+          const newMap = new Map(prev);
+          newMap.delete(raceId);
+          return newMap;
+        });
+      }
+    }, 1000); // 1秒
+
+    // タイマーを保存
+    setHoverTimers(prev => new Map(prev).set(raceId, timer));
+  };
+
+  // ホバー終了時にタイマーをクリアする関数
+  const handlePrizeMoneyHoverEnd = (raceId: string) => {
+    console.log('handlePrizeMoneyHoverEnd called with raceId:', raceId);
+    
+    const timer = hoverTimers.get(raceId);
+    if (timer) {
+      clearTimeout(timer);
+      setHoverTimers(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(raceId);
+        return newMap;
+      });
+    }
+  };
 
   return (
     <Box 
@@ -181,7 +331,17 @@ export default function HorseRacingTable() {
             {raceInfo.raceName}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            {formatRaceIdDisplay(raceId || '')} - {raceInfo.venue} {raceInfo.surface}{raceInfo.distance}m {raceInfo.direction}回り
+            {raceInfo.date && (() => {
+              // YYYYMMDD形式をYYYY年MM月DD日形式に変換
+              if (raceInfo.date.length === 8) {
+                const year = raceInfo.date.substring(0, 4);
+                const month = raceInfo.date.substring(4, 6);
+                const day = raceInfo.date.substring(6, 8);
+                return `${year}年${month}月${day}日 `;
+              }
+              return `${raceInfo.date} `;
+            })()}
+            {raceInfo.venue} {raceInfo.surface}{raceInfo.distance}m {raceInfo.direction}回り
             {raceInfo.surface === '芝' && ` クッション値:${raceInfo.cushionValue}`}
           </Typography>
         </Box>
@@ -342,6 +502,31 @@ export default function HorseRacingTable() {
                     
                     return '-';
                   })();
+                  // 賞金情報のツールチップ内容を作成
+                  const prizeInfo = prizeMoneyCache.get(r.raceId);
+                  const isLoading = loadingPrizeMoney.has(r.raceId);
+                  console.log(`Race ${r.raceId}: prizeInfo=`, prizeInfo, 'isLoading=', isLoading);
+                  
+                  const prizeTooltip = (() => {
+                    if (isLoading) return 'レースレベルを算出中...';
+                    if (prizeInfo && (prizeInfo.prizeMoney !== undefined || prizeInfo.earnedMoney !== undefined)) {
+                      const parts: string[] = [];
+                      const head = prizeInfo.horseCount ? `（頭数:${prizeInfo.horseCount}）` : '';
+                      if (typeof prizeInfo.prizeMoney === 'number') {
+                        const avg = typeof prizeInfo.avgPrize === 'number' ? `／平均${prizeInfo.avgPrize}万円` : '';
+                        parts.push(`レースレベル（前走まで累計）${head}`);
+                        parts.push(`総賞金合計: ${prizeInfo.prizeMoney}万円${avg}`);
+                      }
+                      if (typeof prizeInfo.earnedMoney === 'number') {
+                        const avgE = typeof prizeInfo.avgEarned === 'number' ? `／平均${prizeInfo.avgEarned}万円` : '';
+                        parts.push(`収得賞金合計: ${prizeInfo.earnedMoney}万円${avgE}`);
+                      }
+                      return parts.join('\n');
+                    }
+                    const hasTimer = hoverTimers.has(r.raceId);
+                    return hasTimer ? '1秒後にレースレベルを算出...' : 'ホバーでレースレベルを算出';
+                  })();
+
                   return (
                     <TableCell 
                       key={idx} 
@@ -355,6 +540,20 @@ export default function HorseRacingTable() {
                         lineHeight: 1.3
                       }}
                     >
+                      <Tooltip 
+                        title={prizeTooltip || '賞金情報を取得中...'} 
+                        placement="top"
+                        arrow
+                        disableHoverListener={false}
+                        onOpen={() => {
+                          console.log('Tooltip onOpen triggered for raceId:', r.raceId);
+                          handlePrizeMoneyHoverStart(r.raceId);
+                        }}
+                        onClose={() => {
+                          console.log('Tooltip onClose triggered for raceId:', r.raceId);
+                          handlePrizeMoneyHoverEnd(r.raceId);
+                        }}
+                      >
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                         {/* 日付・場名・レース名 */}
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
@@ -450,6 +649,7 @@ export default function HorseRacingTable() {
                           {r.position}着
                         </Typography>
                       </Box>
+                      </Tooltip>
                     </TableCell>
                   );
                 })}

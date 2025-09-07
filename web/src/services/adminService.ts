@@ -1,7 +1,7 @@
 // API Base URL - 環境に応じて変更
 import { VenueBoard } from '../types/horse';
 import { formatRaceTime } from '../utils/timeUtils';
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8787';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://192.168.1.3:8787';
 
 export interface HorseData {
   id: string;
@@ -11,6 +11,7 @@ export interface HorseData {
   color: string;
   father: string;
   mother: string;
+  maternalGrandfather?: string;
   trainer: string;
   owner: string;
   breeder: string;
@@ -68,12 +69,16 @@ export interface RaceResultData {
   pos2c?: number;
   pos3c?: number;
   pos4c?: number;
+  // 賞金情報
+  prizeMoney?: number; // 本賞金（万円）
+  earnedMoney?: number; // 収得賞金（万円）
 }
 
 export interface RaceEntryData {
   id: string;
   raceId: string;
   horseId: string;
+  date?: string;
   frameNo: number;
   horseNo: number;
   age: number;
@@ -86,6 +91,10 @@ export interface RaceEntryData {
   bodyWeightDiff?: number;
   blinkers?: boolean;
   horse?: HorseData | null;
+  maternalGrandfather?: string;
+  // 賞金情報
+  prizeMoney?: number; // 本賞金（万円）
+  earnedMoney?: number; // 収得賞金（万円）
 }
 
 // API呼び出しサービス
@@ -305,12 +314,13 @@ export class AdminService {
     }
   }
 
-  async getRaceResults(raceId?: string, horseId?: string, limit?: number): Promise<RaceResultData[]> {
+  async getRaceResults(raceId?: string, horseId?: string, limit?: number, beforeDate?: string): Promise<RaceResultData[]> {
     try {
       const params = new URLSearchParams();
       if (raceId) params.append('raceId', raceId);
       if (horseId) params.append('horseId', horseId);
       if (limit !== undefined) params.append('limit', String(limit));
+      if (beforeDate) params.append('beforeDate', beforeDate);
 
       const response = await fetch(`${API_BASE_URL}/api/race-results?${params}`);
       if (!response.ok) {
@@ -380,6 +390,25 @@ export class AdminService {
     } catch (error) {
       console.error('Error getting race entries:', error);
       return [];
+    }
+  }
+
+  // テスト用：賞金情報を更新
+  async updatePrizeMoney(raceId: string, prizeMoney: number, earnedMoney: number): Promise<void> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/races/${raceId}/prize-money`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prizeMoney, earnedMoney }),
+      });
+      if (!response.ok) {
+        throw new Error('賞金情報の更新に失敗しました');
+      }
+    } catch (error) {
+      console.error('Error updating prize money:', error);
+      throw new Error('賞金情報の更新に失敗しました');
     }
   }
 }
@@ -503,12 +532,18 @@ export class MockAdminService {
     return horses.slice(start, end);
   }
 
-  async getRaceResults(raceId?: string, horseId?: string, limit?: number): Promise<RaceResultData[]> {
+  async getRaceResults(raceId?: string, horseId?: string, limit?: number, beforeDate?: string): Promise<RaceResultData[]> {
     console.log('Mock: Getting race results:', raceId, horseId);
     const results = JSON.parse(localStorage.getItem('raceResults') || '[]');
+    const normalize = (s: string) => (s || '').replace(/[^0-9]/g, '').slice(0, 8);
+    const beforeKey = beforeDate ? normalize(beforeDate) : undefined;
     const filtered = results.filter((result: any) => {
       if (raceId && result.raceId !== raceId) return false;
       if (horseId && result.horseId !== horseId) return false;
+      if (beforeKey) {
+        const d = normalize(result.date);
+        if (!d || d >= beforeKey) return false; // 当日・未来を除外
+      }
       return true;
     });
 

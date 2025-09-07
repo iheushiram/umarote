@@ -2,8 +2,9 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createDb } from './db/db';
 import { horses, races, raceResults, raceEntries, trackConditions } from './db/schema';
+import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
 import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry } from './db/schema';
-import { eq, sql, and, inArray, desc } from 'drizzle-orm';
+import { eq, sql, and, inArray, desc, lt, lte } from 'drizzle-orm';
 
 type Bindings = {
   DB: D1Database;
@@ -47,6 +48,7 @@ app.post('/api/horses', async (c) => {
             color: horseData.color,
             father: horseData.father,
             mother: horseData.mother,
+            maternalGrandfather: (horseData as any).maternalGrandfather || horses.maternalGrandfather,
             trainer: horseData.trainer,
             owner: horseData.owner,
             breeder: horseData.breeder,
@@ -151,16 +153,15 @@ app.get('/api/race-results', async (c) => {
   const raceId = c.req.query('raceId');
   const horseId = c.req.query('horseId');
   const limitParam = c.req.query('limit');
+  const beforeDate = c.req.query('beforeDate');
   const limit = limitParam ? parseInt(limitParam) : undefined;
 
-  let whereClause: any = undefined;
-  if (raceId && horseId) {
-    whereClause = and(eq(raceResults.raceId, raceId), eq(raceResults.horseId, horseId));
-  } else if (raceId) {
-    whereClause = eq(raceResults.raceId, raceId);
-  } else if (horseId) {
-    whereClause = eq(raceResults.horseId, horseId);
-  }
+  // 条件組み立て
+  const conditions: any[] = [];
+  if (raceId) conditions.push(eq(raceResults.raceId, raceId));
+  if (horseId) conditions.push(eq(raceResults.horseId, horseId));
+  if (beforeDate) conditions.push(lt(raceResults.date, beforeDate)); // 当日より前のみ
+  const whereClause: any = conditions.length > 0 ? and(...conditions as any) : undefined;
 
   // 並び替え: 日付降順 → 人気昇順
   const query = db.select().from(raceResults)
@@ -394,7 +395,7 @@ app.post('/api/race-results-with-horses', async (c) => {
     // 2. 馬の基本情報を抽出して登録（既に登録済みの場合はスキップ）
     const horseMap = new Map<string, NewHorse>();
     
-    for (const resultData of resultsData) {
+  for (const resultData of resultsData) {
       if (resultData.horseId && !horseMap.has(resultData.horseId)) {
         // レース結果から馬の基本情報を推定
         const horseData: NewHorse = {
@@ -407,6 +408,7 @@ app.post('/api/race-results-with-horses', async (c) => {
           color: '',
           father: (resultData as any).horseFather || '',
           mother: (resultData as any).horseMother || '',
+          maternalGrandfather: (resultData as any).horseMaternalGrandfather || '',
           trainer: (resultData as any).horseTrainer || resultData.jockey || '', // 調教師を優先
           owner: (resultData as any).horseOwner || '',
           breeder: (resultData as any).horseBreeder || '',
@@ -423,22 +425,23 @@ app.post('/api/race-results-with-horses', async (c) => {
           ...horseData,
           updatedAt: sql`CURRENT_TIMESTAMP`
         })
-        .onConflictDoUpdate({
-          target: horses.id,
-          set: {
-            name: horseData.name,
-            birthDate: horseData.birthDate,
-            sex: horseData.sex,
-            color: horseData.color,
-            father: horseData.father,
-            mother: horseData.mother,
-            trainer: horseData.trainer,
-            owner: horseData.owner,
-            breeder: horseData.breeder,
-            earnings: horseData.earnings,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          }
-        });
+    .onConflictDoUpdate({
+      target: horses.id,
+      set: {
+        name: horseData.name,
+        birthDate: horseData.birthDate,
+        sex: horseData.sex,
+        color: horseData.color,
+        father: horseData.father,
+        mother: horseData.mother,
+        maternalGrandfather: (horseData as any).maternalGrandfather || horses.maternalGrandfather,
+        trainer: horseData.trainer,
+        owner: horseData.owner,
+        breeder: horseData.breeder,
+        earnings: horseData.earnings,
+        updatedAt: sql`CURRENT_TIMESTAMP`
+      }
+    });
     }
     
     // 3. レース結果をUPSERT
@@ -478,6 +481,9 @@ app.post('/api/race-results-with-horses', async (c) => {
             averageThreeFurlong: (resultData as any).averageThreeFurlong,
             odds: resultData.odds,
             popularity: resultData.popularity,
+            // 賞金情報
+            prizeMoney: (resultData as any).prizeMoney || null,
+            earnedMoney: (resultData as any).earnedMoney || null,
             updatedAt: sql`CURRENT_TIMESTAMP`
           }
         });
@@ -525,6 +531,7 @@ app.post('/api/race-entries', async (c) => {
             bodyWeight: e.bodyWeight,
             bodyWeightDiff: e.bodyWeightDiff,
             blinkers: e.blinkers,
+            maternalGrandfather: (e as any).maternalGrandfather || null,
             updatedAt: sql`CURRENT_TIMESTAMP`
           });
       } catch (err) {
@@ -573,27 +580,37 @@ app.post('/api/race-entries-csv', async (c) => {
         }
       }
       
-      // レースIDの生成（年月日 + 場所 + 開催回数 + 日数 + レース番号）
-      // 例: 2025年4月2日 新潟 2回7日目 1R → 202504020701
-      const date = normalizedDate;
-      const venue = row['場所'];
+      // レースIDの生成（YYYY + 会場2桁 + 開催2桁 + 日次2桁 + R2桁 = 12桁）
+      // 入力CSV: 日付(yyyy.mm.dd) or 年月日, 開催(例: 1札6), R
+      const rawDate = row['年月日'] || row['日付'] || row['日付(yyyy.mm.dd)'] || '';
+      let date = rawDate;
+      if (typeof date === 'string' && date.includes('.')) {
+        const parts = date.replace(/\s+/g, '').split('.');
+        if (parts.length >= 3) {
+          const y = parts[0];
+          const m = parts[1].padStart(2, '0');
+          const d = parts[2].padStart(2, '0');
+          date = `${y}${m}${d}`;
+        }
+      }
       const raceNo = row['R'];
-      
-      // 場所を数値に変換
-      const venueMap: Record<string, string> = {
-        '札幌': '01', '函館': '02', '福島': '03', '新潟': '04', '東京': '05',
-        '中山': '06', '中京': '07', '京都': '08', '阪神': '09', '小倉': '10'
-      };
-      const venueCode = venueMap[venue] || '00';
-      
-      // CSVのレースIDからrace_idを正しい形式に変換
-      const fullRaceId = row['レースID'];
-      const venueCodeFromId = fullRaceId.substring(0, 2);
-      const year = fullRaceId.substring(2, 4);
-      const meeting = fullRaceId.substring(4, 5).padStart(2, '0');
-      const day = fullRaceId.substring(5, 6).padStart(2, '0');
-      const raceNoFromId = fullRaceId.substring(6, 8);
-      const raceId = `20${year}${venueCodeFromId}${meeting}${day}${raceNoFromId}`;
+      const venueComposite = row['開催'] || row['場所'] || '';
+      const legacyId = row['レースID'] || '';
+
+      const { parseFromVenueField, normalizeVenueName } = await import('./utils/raceId');
+      const mdLegacy = parseMeetingDayFromLegacy(String(legacyId));
+      const fromVenue = parseFromVenueField(String(venueComposite));
+      const venuePlace = fromVenue.venueName || normalizeVenueName(String(venueComposite));
+      const meeting = fromVenue.meeting || mdLegacy.meeting || '01';
+      const day = fromVenue.day || mdLegacy.day || '01';
+
+      const raceId = buildRaceId({
+        date: String(date || ''),
+        place: String(venuePlace || ''),
+        raceNo: String(raceNo || ''),
+        meeting,
+        day
+      });
       
       // 馬IDの生成（血統登録番号の頭に20を追加）
       const horseId = `20${row['血統登録番号']}`;
@@ -602,9 +619,9 @@ app.post('/api/race-entries-csv', async (c) => {
       const raceData: NewRace = {
         raceId: raceId,
         date: normalizedDate,
-        venue: row['場所'],
-        meetingNumber: 1, // デフォルト値
-        dayNumber: 1,     // デフォルト値
+        venue: venuePlace, // 正式名称で保存（例: 福島）
+        meetingNumber: parseInt(String(meeting)),
+        dayNumber: parseInt(String(day)),
         raceNo: parseInt(row['R']),
         raceName: row['レース名'],
         className: row['レース名'].includes('未勝利') ? '未勝利' : 
@@ -629,6 +646,7 @@ app.post('/api/race-entries-csv', async (c) => {
         color: row['毛色'] || '',
         father: row['種牡馬'] || '',
         mother: row['母'] || '',
+        maternalGrandfather: row['母父馬'] || row['母父'] || '',
         trainer: row['調教師'] || '',
         owner: row['馬主'] || '',
         breeder: row['生産者'] || '',
@@ -663,7 +681,7 @@ app.post('/api/race-entries-csv', async (c) => {
         mother: row['母'] || '',
         owner: row['馬主'] || '',
         breeder: row['生産者'] || '',
-        maternalGrandfather: row['母父'] || '',
+        maternalGrandfather: row['母父馬'] || row['母父'] || '',
         // レース結果情報
         previousPopularity: row['前人気'] ? parseInt(row['前人気']) : null,
         previousFinishPosition: row['前着'] ? parseInt(row['前着']) : null,
@@ -788,10 +806,31 @@ app.get('/api/races/:raceId/entries', async (c) => {
     const horsesRows = await db.select().from(horses).where(inArray(horses.id, horseIds as any));
     const horseMap = new Map(horsesRows.map(h => [h.id, h] as const));
 
-    const enriched = entries.map(e => ({
-      ...e,
-      horse: horseMap.get(e.horseId) || null
-    }));
+    // race_resultsテーブルから過去の総賞金情報を取得（そのレース以前の累積）
+    const raceDate = entries[0]?.date; // レースの日付を取得
+    
+    // 仕様: 「各馬の前走まで（当日以前）の累計」を求め、その合計をレースレベルとする
+    const perHorseTotals = await db.select({
+      horseId: raceResults.horseId,
+      prize: sql<number>`SUM(${raceResults.prizeMoney})`,
+      earned: sql<number>`SUM(${raceResults.earnedMoney})`
+    })
+    .from(raceResults)
+    .where(and(inArray(raceResults.horseId, horseIds as any), lt(raceResults.date, raceDate)))
+    .groupBy(raceResults.horseId);
+
+    const totalPrizeMoney = perHorseTotals.reduce((acc, r) => acc + (r.prize || 0), 0);
+    const totalEarnedMoney = perHorseTotals.reduce((acc, r) => acc + (r.earned || 0), 0);
+
+    const enriched = entries.map(e => {
+      return {
+        ...e,
+        horse: horseMap.get(e.horseId) || null,
+        // そのレース全体の過去の総賞金情報を追加
+        prizeMoney: totalPrizeMoney,
+        earnedMoney: totalEarnedMoney
+      };
+    });
 
     return c.json(enriched);
   } catch (error) {
@@ -800,9 +839,33 @@ app.get('/api/races/:raceId/entries', async (c) => {
   }
 });
 
+// テスト用：賞金情報を手動で更新
+app.patch('/api/races/:raceId/prize-money', async (c) => {
+  try {
+    const db = createDb(c.env.DB);
+    const raceId = c.req.param('raceId');
+    const { prizeMoney, earnedMoney } = await c.req.json();
+
+    // 指定されたレースの全てのエントリーを更新
+    await db.update(raceEntries)
+      .set({
+        prizeMoney: prizeMoney || null,
+        earnedMoney: earnedMoney || null,
+        updatedAt: new Date().toISOString()
+      })
+      .where(eq(raceEntries.raceId, raceId));
+
+    return c.json({ success: true, message: '賞金情報を更新しました' });
+  } catch (error) {
+    console.error('Error updating prize money:', error);
+    return c.json({ error: '賞金情報の更新に失敗しました' }, 500);
+  }
+});
+
 // レースIDから情報を抽出するヘルパー関数
 function getVenueFromRaceId(raceId: string): string {
-  const venueCode = raceId.substring(6, 8);
+  // YYYY(0-3) + venue(4-5) + meeting(6-7) + day(8-9) + R(10-11)
+  const venueCode = raceId.substring(4, 6);
   const venueMap: Record<string, string> = {
     '01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
     '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉'

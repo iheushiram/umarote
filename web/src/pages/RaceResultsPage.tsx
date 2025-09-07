@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -16,48 +16,114 @@ import {
 } from '@mui/material';
 import { ArrowLeft } from 'lucide-react';
 import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
+import type { RaceEntryData, RaceResultData, RaceData } from '../services/adminService';
+import { AdminService } from '../services/adminService';
 
 type Row = {
-  pos: number;
-  frame: number;
-  num: number;
-  name: string;
-  sexAge: string;
+  pos: number; // 着順
+  frame?: number;
+  num?: number;
+  name: string; // 馬名
   carried: number; // 斤量
   jockey: string;
-  time: number; // 数値（例: 1275 = 1:27.5）
+  time: string | number; // 数値 or 文字列（例: 1275 or '1275'）
   distance: number; // 距離（メートル）
-  diff: string;
-  pass: string;
-  last3F: string;
-  odds: number;
-  pop: number; // 人気
-  body: string; // 体重(+増減)
-  trainer: string;
-  owner: string;
-  prize: number; // 万円
-};
-
-const MOCK_RESULTS: Record<string, Row[]> = {
-  default: [
-    {pos:1, frame:6, num:6, name:'コトリノサエズリ', sexAge:'牡3', carried:55, jockey:'田口貫太', time:1275, distance:1700, diff:'',   pass:'3-2-1', last3F:'382', odds:1.6,  pop:1, body:'468(+2)', trainer:'吉田勝利', owner:'吉田勝利', prize:70.0},
-    {pos:2, frame:3, num:3, name:'インビッシュ',     sexAge:'牡3', carried:55, jockey:'西塚洸二', time:1278, distance:1700, diff:'0.1', pass:'5-3-2', last3F:'383', odds:8.4,  pop:3, body:'471(+7)', trainer:'小林真也', owner:'(株)ノルマンディ', prize:28.0},
-    {pos:3, frame:5, num:5, name:'フェアリアルギフト', sexAge:'牡3', carried:55, jockey:'岡部誠',   time:1281, distance:1700, diff:'0.6', pass:'4-4-3', last3F:'386', odds:10.8, pop:4, body:'400(0)',   trainer:'緒方努',   owner:'谷嶋泰吾',     prize:17.5},
-    {pos:4, frame:7, num:7, name:'ルルーディ',       sexAge:'牡3', carried:55, jockey:'城戸義政', time:1289, distance:1700, diff:'1.4', pass:'8-6-4', last3F:'398', odds:36.6, pop:6, body:'452(0)',   trainer:'宮地謙祐', owner:'吉野功寿代',   prize:10.5},
-    {pos:5, frame:4, num:4, name:'ラーンノヴァイン', sexAge:'牡3', carried:55, jockey:'藤原幹生', time:1292, distance:1700, diff:'1.7', pass:'2-1-2', last3F:'402', odds:9.4,  pop:2, body:'490(+8)', trainer:'大野貴義', owner:'伊藤達',       prize:7.0},
-    {pos:6, frame:1, num:1, name:'オールザマタイム', sexAge:'牡3', carried:53, jockey:'枝本一城', time:1298, distance:1700, diff:'2.3', pass:'6-7-7', last3F:'407', odds:26.2, pop:7, body:'482(+3)', trainer:'加藤義章', owner:'同川秀守',     prize:5.0},
-    {pos:7, frame:1, num:2, name:'アイズグレッソ',   sexAge:'牡3', carried:55, jockey:'渡辺竜也', time:1311, distance:1700, diff:'3.6', pass:'9-9-8', last3F:'418', odds:34.8, pop:5, body:'479(+2)', trainer:'鈴木慎太', owner:'(株)ノルマンディ', prize:4.0},
-    {pos:8, frame:2, num:8, name:'ユズモフィネス',   sexAge:'牡3', carried:53, jockey:'深澤杏花', time:1353, distance:1700, diff:'大',  pass:'7-8-9', last3F:'—',  odds:48.2, pop:9, body:'436(+1)', trainer:'柴田高志', owner:'小橋亮太',     prize:0.0},
-  ],
+  diff?: string; // 着差
+  pass?: string; // 通過
+  last3F?: string; // 上り
+  odds?: number;
+  pop?: number; // 人気
 };
 
 export default function RaceResultsPage() {
   const { raceId } = useParams<{ raceId: string }>();
   const navigate = useNavigate();
+  const [rows, setRows] = useState<Row[]>([]);
+  const [raceInfo, setRaceInfo] = useState<RaceData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const rows = useMemo(() => {
-    // raceId毎のデータ拡張は必要に応じて
-    return MOCK_RESULTS.default;
+  useEffect(() => {
+    const svc = new AdminService();
+    let mounted = true;
+    async function load() {
+      if (!raceId) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const [race, results, entries] = await Promise.all<[
+          Promise<RaceData | null>,
+          Promise<RaceResultData[]>,
+          Promise<RaceEntryData[]>
+        ]>([
+          svc.getRace(raceId),
+          svc.getRaceResults(raceId),
+          svc.getRaceEntries(raceId)
+        ]);
+
+        if (!mounted) return;
+
+        setRaceInfo(race);
+
+        // エントリー情報をマップ化（馬ID → 枠/馬番/馬名）
+        const entryMap = new Map<string, RaceEntryData>();
+        (entries || []).forEach(e => entryMap.set(e.horseId, e));
+
+        // 通過順の整形（常に 1C-2C-3C-4C の4区切り）。
+        // ルール: pos1c..pos4c のいずれかが存在する場合はそれを優先して連結。
+        //       全て欠損のときのみ cornerPassings を4要素にパディングして使用。
+        const formatPassing = (r: RaceResultData) => {
+          const vals = [r.pos1c, r.pos2c, r.pos3c, r.pos4c].map((v) =>
+            v === undefined || v === null ? '' : String(v)
+          );
+          const anyPos = vals.some((v) => v !== '');
+          if (anyPos) {
+            return vals.join('-');
+          }
+          const cp = (r as any).cornerPassings as string | undefined;
+          if (cp && cp.trim() !== '') {
+            const parts = cp.split('-');
+            while (parts.length < 4) parts.push('');
+            return parts.slice(0, 4).join('-');
+          }
+          return '';
+        };
+
+        const vm: Row[] = (results || [])
+          .sort((a, b) => {
+            const A = a.finishPosition ?? 9999;
+            const B = b.finishPosition ?? 9999;
+            return A - B;
+          })
+          .map((r) => {
+            const ent = entryMap.get(r.horseId);
+            return {
+              pos: r.finishPosition ?? 0,
+              frame: ent?.frameNo,
+              num: ent?.horseNo,
+              name: (ent as any)?.horseName || ent?.horse?.name || r.horseId,
+              carried: r.weight,
+              jockey: r.jockey,
+              time: r.time,
+              distance: r.distance,
+              diff: r.margin,
+              pass: formatPassing(r),
+              last3F: r.lastThreeFurlong,
+              odds: r.odds,
+              pop: r.popularity,
+            };
+          });
+
+        setRows(vm);
+      } catch (e: any) {
+        console.error(e);
+        setError('レース結果の取得に失敗しました');
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+    return () => { mounted = false; };
   }, [raceId]);
 
   const posChip = (pos: number) => {
@@ -77,63 +143,71 @@ export default function RaceResultsPage() {
   };
 
   return (
-    <Box sx={{ pb: 4, maxWidth: 1100, mx: 'auto', px: 2 }}>
+    <Box sx={{ pb: 4, mx: 'auto', px: 2 }}>
       <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
         <Button startIcon={<ArrowLeft />} onClick={() => navigate(-1)} variant="outlined" size="small">
           戻る
         </Button>
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>レース結果</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>
+          レース結果{raceInfo ? `（${raceInfo.raceName} / ${raceInfo.venue} ${raceInfo.surface}${raceInfo.distance}m）` : ''}
+        </Typography>
       </Stack>
 
-      <TableContainer component={Paper}>
-        <Table size="small" stickyHeader aria-label="race results table">
+      <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
+        <Table size="small" stickyHeader aria-label="race results table" sx={{ minWidth: 980 }}>
           <TableHead>
             <TableRow>
-              <TableCell>着順</TableCell>
-              <TableCell>枠</TableCell>
-              <TableCell>馬番</TableCell>
-              <TableCell sx={{ textAlign: 'left' }}>馬名</TableCell>
-              <TableCell>性齢</TableCell>
-              <TableCell>斤量</TableCell>
-              <TableCell>騎手</TableCell>
-              <TableCell>タイム</TableCell>
-              <TableCell>平均速度</TableCell>
-              <TableCell>着差</TableCell>
-              <TableCell>通過</TableCell>
-              <TableCell>上り</TableCell>
-              <TableCell>単勝</TableCell>
-              <TableCell>人気</TableCell>
-              <TableCell>馬体重</TableCell>
-              <TableCell>調教師</TableCell>
-              <TableCell>馬主</TableCell>
-              <TableCell>賞金(万円)</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>着順</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>枠</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>馬番</TableCell>
+              <TableCell sx={{ textAlign: 'left', whiteSpace: 'nowrap', minWidth: 180 }}>馬名</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>斤量</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap', minWidth: 120 }}>騎手</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>タイム</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>平均速度</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>着差</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap', minWidth: 120 }}>通過(1C-2C-3C-4C)</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>上り</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>単勝</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>人気</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((r, i) => {
+            {loading && (
+              <TableRow>
+                <TableCell colSpan={13}>
+                  <Typography variant="body2" color="text.secondary">読み込み中…</Typography>
+                </TableCell>
+              </TableRow>
+            )}
+            {error && !loading && (
+              <TableRow>
+                <TableCell colSpan={13}>
+                  <Typography variant="body2" color="error.main">{error}</Typography>
+                </TableCell>
+              </TableRow>
+            )}
+            {!loading && !error && rows.map((r, i) => {
               const averageSpeed = calculateAverageSpeed(r.distance, r.time);
               return (
                 <TableRow key={i}>
-                  <TableCell>{posChip(r.pos)}</TableCell>
-                  <TableCell>{r.frame}</TableCell>
-                  <TableCell>{r.num}</TableCell>
-                  <TableCell sx={{ textAlign: 'left' }}>{r.name}</TableCell>
-                  <TableCell>{r.sexAge}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{posChip(r.pos)}</TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.frame ?? '-'}</TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.num ?? '-'}</TableCell>
+                  <TableCell sx={{ textAlign: 'left', whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</TableCell>
                   <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.carried}</TableCell>
-                  <TableCell>{r.jockey}</TableCell>
-                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{formatRaceTime(r.time)}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.jockey}</TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{formatRaceTime(r.time)}</TableCell>
                   <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
                     {averageSpeed > 0 ? `${averageSpeed} km/h` : '-'}
                   </TableCell>
-                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.diff}</TableCell>
-                  <TableCell>{r.pass}</TableCell>
-                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.last3F}</TableCell>
-                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.odds}</TableCell>
-                  <TableCell>{r.pop}</TableCell>
-                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.body}</TableCell>
-                  <TableCell>{r.trainer}</TableCell>
-                  <TableCell>{r.owner}</TableCell>
-                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.prize.toFixed(1)}</TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.diff || '-'}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.pass || '-'}</TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.last3F || '-'}</TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {typeof r.odds === 'number' && r.odds > 0 ? r.odds.toFixed(1) : '-'}
+                  </TableCell>
+                  <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.pop ?? '-'}</TableCell>
                 </TableRow>
               );
             })}
@@ -143,4 +217,3 @@ export default function RaceResultsPage() {
     </Box>
   );
 }
-

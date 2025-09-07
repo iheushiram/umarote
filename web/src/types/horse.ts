@@ -150,6 +150,9 @@ export interface RaceDetail {
   margin: string; // 着差
   notes?: string; // メモ
   isFeature: boolean; // 重賞・特別レースか
+  // 賞金情報
+  prizeMoney?: number; // 本賞金（万円）
+  earnedMoney?: number; // 収得賞金（万円）
 }
 
 // 馬柱用馬情報

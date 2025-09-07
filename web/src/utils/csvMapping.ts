@@ -68,6 +68,8 @@ export const JAPANESE_TO_ENGLISH_MAPPING: Record<string, string> = {
   '着差': 'margin',
   '上り3F': 'lastThreeFurlong',
   '単勝配当': 'odds',
+  '単勝オッズ': 'odds',
+  'オッズ': 'odds',
   '開催': 'venue',
   'コース区分': 'courseClassification',
   '2角': 'corner2',
@@ -156,8 +158,30 @@ export function generateRaceIdFromData(
       venueName = '中京';
     }
   } else {
-    // パターン2: "中京" のような形式（開催地のみ）
-    venueName = normalizedVenue;
+    // パターン2: 開催回 + 会場記号（例: 1函B → meeting=1, venue=函, day=B→11）
+    const venueMatch2 = normalizedVenue.match(/^(\d+)([^\d]+)$/);
+    if (venueMatch2) {
+      const symbol = venueMatch2[2];
+      meetingNum = venueMatch2[1];
+      // 記号末尾の英字を日次として解釈（A=10, B=11, C=12, ...）
+      const letter = (symbol.match(/[A-Za-z]$/) || [])[0];
+      if (letter) {
+        const upper = letter.toUpperCase();
+        const dayVal = 10 + (upper.charCodeAt(0) - 'A'.charCodeAt(0));
+        if (dayVal >= 10 && dayVal <= 35) dayNum = String(dayVal);
+      }
+      // 会場名は記号中の最初の会場文字で推定
+      const shortVenueMapping: Record<string, string> = {
+        '札': '札幌', '函': '函館', '福': '福島', '新': '新潟', '東': '東京',
+        '中': '中山', '名': '中京', '京': '京都', '阪': '阪神', '小': '小倉'
+      };
+      let mapped = '';
+      for (const ch of symbol) { if (shortVenueMapping[ch]) { mapped = shortVenueMapping[ch]; break; } }
+      venueName = mapped || symbol;
+    } else {
+      // パターン3: 会場名のみ（短縮/正式）
+      venueName = normalizedVenue;
+    }
   }
   
   const venueCode = getVenueCode(venueName);
@@ -181,28 +205,30 @@ export function generateRaceIdFromData(
 
 // Get venue code mapping using VENUE_ID_MAP
 function getVenueCode(venue: string): string {
-  // 短縮形のマッピング
   const shortVenueMapping: Record<string, string> = {
-    '札': '札幌',
-    '函': '函館',
-    '福': '福島',
-    '新': '新潟',
-    '東': '東京',
-    '中': '中山',
-    '京': '京都',
-    '阪': '阪神',
-    '小': '小倉',
-    '名': '中京'  // 名は中京を意味する
+    '札': '札幌', '函': '函館', '福': '福島', '新': '新潟', '東': '東京',
+    '中': '中山', '名': '中京', '京': '京都', '阪': '阪神', '小': '小倉'
   };
-  
-  // 短縮形を正式名称に変換
-  const fullVenueName = shortVenueMapping[venue] || venue;
-  
-  // VENUE_ID_MAPからIDを取得
-  const venueId = VENUE_ID_MAP[fullVenueName];
-  
-  console.log('Venue mapping for:', venue, '->', fullVenueName, '->', venueId || '99');
-  return venueId || '99';
+  const s = (venue || '').replace(/\s+/g, '');
+  // 1) フル名称が含まれていれば優先
+  for (const full of Object.keys(VENUE_ID_MAP)) {
+    if (s.includes(full)) {
+      const id = VENUE_ID_MAP[full];
+      console.log('Venue(full) mapping:', s, '->', full, '->', id);
+      return id;
+    }
+  }
+  // 2) 短縮1文字を走査
+  for (const ch of s) {
+    if (shortVenueMapping[ch]) {
+      const full = shortVenueMapping[ch];
+      const id = VENUE_ID_MAP[full];
+      console.log('Venue(short) mapping:', s, '->', ch, '->', full, '->', id);
+      return id || '99';
+    }
+  }
+  console.log('Venue mapping fallback (99) for:', s);
+  return '99';
 }
 
 // Generate horse ID from pedigree registration number
@@ -450,7 +476,19 @@ export function processJapaneseCsvRow(
   const courseCondition = TRACK_CONDITION_MAPPING[rawTrackCondition] || '' as any;
   
   // Convert odds
-  const odds = rowData['単勝配当'] ? convertOddsFormat(rowData['単勝配当']) : '' as any;
+  // 優先: 「単勝オッズ」(小数) → 次点: 「オッズ」(小数) → 次点: 「単勝配当」(払い戻し/100)
+  let odds: number | '' = '' as any;
+  const rawOdds1 = (rowData['単勝オッズ'] || '').toString().replace(/[^\d.]/g, '');
+  const rawOdds2 = (rowData['オッズ'] || '').toString().replace(/[^\d.]/g, '');
+  if (rawOdds1) {
+    const v = parseFloat(rawOdds1);
+    odds = Number.isFinite(v) ? v : '' as any;
+  } else if (rawOdds2) {
+    const v = parseFloat(rawOdds2);
+    odds = Number.isFinite(v) ? v : '' as any;
+  } else if (rowData['単勝配当']) {
+    odds = convertOddsFormat(rowData['単勝配当']);
+  }
   
   // 馬の基本情報も含める
   const sex = (rowData['性別'] || '').trim();
@@ -478,6 +516,7 @@ export function processJapaneseCsvRow(
     (age ? `${new Date().getFullYear() - parseInt(age)}0101`.padStart(8, '0') : '');
   const father = rowData['種牡馬'] || rowData['父'] || rowData['父馬'] || '';
   const mother = rowData['母馬'] || rowData['母'] || '';
+  const maternalGrandfather = rowData['母父馬'] || rowData['母父'] || '';
   const owner = rowData['馬主(レース時)'] || rowData['馬主'] || rowData['オーナー'] || '';
   const breeder = rowData['生産者'] || rowData['ブリーダー'] || '';
   
@@ -609,6 +648,16 @@ export function processJapaneseCsvRow(
     })(),
     odds: odds || 0,
     popularity: (() => { const p = normalizeDigits(rowData['人気'] || ''); return p ? parseInt(p) : 0; })(),
+    // 賞金情報
+    prizeMoney: (() => { const v = (rowData['賞金'] || '').replace(/[^\d.]/g, ''); return v ? parseInt(v) : null; })(),
+    earnedMoney: (() => { 
+      const rawValue = rowData['付加賞金'] || '';
+      console.log('付加賞金 raw value:', rawValue, 'for horse:', horseName);
+      const v = rawValue.replace(/[^\d.]/g, '');
+      const result = v ? parseInt(v) : 0; // nullの代わりに0を返す
+      console.log('付加賞金 processed:', result, 'for horse:', horseName);
+      return result;
+    })(),
     // 馬の基本情報
     horseName: horseName,
     horseSex: sex,
@@ -618,10 +667,15 @@ export function processJapaneseCsvRow(
     horseEarnings: earnings,
     horseFather: father,
     horseMother: mother,
+    horseMaternalGrandfather: maternalGrandfather,
     horseOwner: owner,
     horseBreeder: breeder,
     // レース情報（API用に追加）
-    venueNormalized: venueName,
+    venueNormalized: (() => {
+      const code = getVenueCode(venueName);
+      const entry = Object.entries(VENUE_ID_MAP).find(([_, v]) => v === code);
+      return entry ? entry[0] : venueName;
+    })(),
     meetingNumber: parseInt(meetingNum),
     dayNumber: parseInt(dayNum),
     raceNo: raceNo,
@@ -653,6 +707,7 @@ export function processJapaneseCsvRow(
     color: color,
     father: father,
     mother: mother,
+    maternalGrandfather: maternalGrandfather,
     trainer: trainer,
     owner: owner,
     breeder: breeder,
@@ -664,7 +719,8 @@ export function processJapaneseCsvRow(
     horseName: raceResult.horseName,
     horseBirthDate: raceResult.horseBirthDate,
     horseFather: raceResult.horseFather,
-    horseMother: raceResult.horseMother
+    horseMother: raceResult.horseMother,
+    horseMaternalGrandfather: maternalGrandfather
   });
   
   return { raceResult, horseData };
@@ -824,8 +880,36 @@ export function extractRaceFromCsvData(
     
     venueName = shortVenueMapping[venueName] || venueName;
   } else {
-    // パターン2: "中京" のような形式（開催地のみ）
-    venueName = normalizedVenue || '東京'; // デフォルトは東京
+    // パターン2: 開催回 + 会場記号（例: 1函B）
+    const venueMatch2 = normalizedVenue.match(/^(\d+)([^\d]+)$/);
+    if (venueMatch2) {
+      meetingNum = venueMatch2[1];
+      const symbol = venueMatch2[2];
+      // 記号末尾に英字があれば日次に変換（A=10, B=11, C=12, ...）
+      const letter = (symbol.match(/[A-Za-z]$/) || [])[0];
+      if (letter) {
+        const upper = letter.toUpperCase();
+        const dayVal = 10 + (upper.charCodeAt(0) - 'A'.charCodeAt(0));
+        if (dayVal >= 10 && dayVal <= 35) dayNum = String(dayVal);
+      }
+      const shortMap: Record<string, string> = {
+        '札': '札幌', '函': '函館', '福': '福島', '新': '新潟', '東': '東京',
+        '中': '中山', '名': '中京', '京': '京都', '阪': '阪神', '小': '小倉'
+      };
+      let mapped = '';
+      for (const ch of symbol) { if (shortMap[ch]) { mapped = shortMap[ch]; break; } }
+      venueName = mapped || symbol || '東京';
+    } else {
+      // パターン3: 会場名のみ（短縮/正式どちらでも）
+      const shortMap: Record<string, string> = {
+        '札': '札幌', '函': '函館', '福': '福島', '新': '新潟', '東': '東京',
+        '中': '中山', '名': '中京', '京': '京都', '阪': '阪神', '小': '小倉'
+      };
+      let mapped = '';
+      for (const full of Object.keys(VENUE_ID_MAP)) { if (normalizedVenue.includes(full)) { mapped = full; break; } }
+      if (!mapped) { for (const ch of normalizedVenue) { if (shortMap[ch]) { mapped = shortMap[ch]; break; } } }
+      venueName = mapped || normalizedVenue || '東京';
+    }
   }
   
   // レース番号の取得（CSVのＲ列から）
@@ -963,6 +1047,7 @@ export interface RaceEntryDataFromCsv {
   bodyWeight?: number;
   bodyWeightDiff?: number;
   blinkers?: boolean;
+  maternalGrandfather?: string;
   date: string; // 追加
 }
 
@@ -1044,9 +1129,11 @@ export function extractRaceEntryFromCsvData(
   const bodyWeight = parseInt(normalizeDigits(findHeaderValue(['馬体重', 'BodyWeight'], '馬体重'))) || undefined;
   const bodyWeightDiff = parseInt(normalizeDigits(findHeaderValue(['馬体重増減', 'BodyWeightDiff'], '馬体重増減'))) || undefined;
   const blinkers = findHeaderValue(['ブリンカー', 'Blinkers'], 'ブリンカー') ? true : false;
+  const maternalGrandfather = findHeaderValue(['母父馬', '母父', '母父名'], '母父馬');
   
-  // 枠番の計算（馬番から推定）
-  const frameNo = horseNo <= 8 ? horseNo : Math.ceil(horseNo / 2);
+  // 枠番の取得（CSVの生データを使用）
+  const rawFrameNo = findHeaderValue(['枠番', '枠', 'Frame', 'FrameNo'], '枠');
+  const frameNo = rawFrameNo ? parseInt(normalizeDigits(rawFrameNo)) : 0;
   
   return {
     id: entryId,
@@ -1063,6 +1150,7 @@ export function extractRaceEntryFromCsvData(
     bodyWeight,
     bodyWeightDiff,
     blinkers,
+    maternalGrandfather: maternalGrandfather || undefined,
     date
   };
 }
