@@ -444,7 +444,70 @@ app.post('/api/race-results-with-horses', async (c) => {
     });
     }
     
-    // 3. レース結果をUPSERT
+    // 3. 出馬表データをUPSERT（存在しない場合は新規作成）
+    for (const resultData of resultsData) {
+      // レース結果から出馬表データを構築
+      const entryData: NewRaceEntry = {
+        raceId: resultData.raceId,
+        horseId: resultData.horseId,
+        date: resultData.date,
+        frameNo: 0, // デフォルト値（レース結果からは取得できない）
+        horseNo: 0, // デフォルト値（レース結果からは取得できない）
+        age: 0, // デフォルト値（レース結果からは取得できない）
+        jockey: resultData.jockey,
+        weight: resultData.weight,
+        trainer: (resultData as any).horseTrainer || '',
+        affiliation: '',
+        popularity: resultData.popularity,
+        bodyWeight: null,
+        bodyWeightDiff: null,
+        blinkers: false,
+        maternalGrandfather: (resultData as any).horseMaternalGrandfather || null,
+        // レース基本情報
+        raceName: resultData.raceName,
+        surface: resultData.courseType,
+        distance: resultData.distance,
+        // 馬の基本情報
+        horseName: (resultData as any).horseName || '',
+        sex: (resultData as any).horseSex || '牡',
+        color: '',
+        father: (resultData as any).horseFather || '',
+        mother: (resultData as any).horseMother || '',
+        owner: (resultData as any).horseOwner || '',
+        breeder: (resultData as any).horseBreeder || '',
+        // レース結果情報
+        previousPopularity: null,
+        previousFinishPosition: null,
+        previousOdds: null,
+        previousFinishOrder: null,
+        // その他の情報
+        dayNumber: null,
+        interval: null,
+        prizeMoney: (resultData as any).prizeMoney || null,
+        earnedMoney: (resultData as any).earnedMoney || null
+      };
+
+      await db.insert(raceEntries)
+        .values({
+          ...entryData,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .onConflictDoUpdate({
+          target: [raceEntries.raceId, raceEntries.horseId],
+          set: {
+            // レース結果から得られる情報を出馬表に反映
+            popularity: resultData.popularity,
+            jockey: resultData.jockey,
+            weight: resultData.weight,
+            // 賞金情報
+            prizeMoney: (resultData as any).prizeMoney || null,
+            earnedMoney: (resultData as any).earnedMoney || null,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          }
+        });
+    }
+
+    // 4. レース結果をUPSERT
     for (const resultData of resultsData) {
       await db.insert(raceResults)
         .values({
@@ -753,12 +816,53 @@ app.post('/api/race-entries-csv', async (c) => {
         });
     }
 
-    // 出馬表データをINSERT（重複チェックなし）
+    // 出馬表データをUPSERT（重複時は上書き）
     for (const entryData of entriesData) {
       await db.insert(raceEntries)
         .values({
           ...entryData,
           updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .onConflictDoUpdate({
+          target: [raceEntries.raceId, raceEntries.horseId],
+          set: {
+            date: entryData.date,
+            frameNo: entryData.frameNo,
+            horseNo: entryData.horseNo,
+            age: entryData.age,
+            jockey: entryData.jockey,
+            weight: entryData.weight,
+            trainer: entryData.trainer,
+            affiliation: entryData.affiliation,
+            popularity: entryData.popularity,
+            bodyWeight: entryData.bodyWeight,
+            bodyWeightDiff: entryData.bodyWeightDiff,
+            blinkers: entryData.blinkers,
+            maternalGrandfather: entryData.maternalGrandfather,
+            // レース基本情報
+            raceName: entryData.raceName,
+            surface: entryData.surface,
+            distance: entryData.distance,
+            // 馬の基本情報
+            horseName: entryData.horseName,
+            sex: entryData.sex,
+            color: entryData.color,
+            father: entryData.father,
+            mother: entryData.mother,
+            owner: entryData.owner,
+            breeder: entryData.breeder,
+            // レース結果情報
+            previousPopularity: entryData.previousPopularity,
+            previousFinishPosition: entryData.previousFinishPosition,
+            previousOdds: entryData.previousOdds,
+            previousFinishOrder: entryData.previousFinishOrder,
+            // その他の情報
+            dayNumber: entryData.dayNumber,
+            interval: entryData.interval,
+            prizeMoney: entryData.prizeMoney,
+            earnedMoney: entryData.earnedMoney,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          }
         });
     }
 
@@ -859,6 +963,190 @@ app.patch('/api/races/:raceId/prize-money', async (c) => {
   } catch (error) {
     console.error('Error updating prize money:', error);
     return c.json({ error: '賞金情報の更新に失敗しました' }, 500);
+  }
+});
+
+// 分析用API: 距離別過去時間分析
+app.get('/api/analysis/distance-times', async (c) => {
+  try {
+    const db = createDb(c.env.DB);
+    const { distance, surface, venue, class: className, limit = '50' } = c.req.query();
+    
+    if (!distance) {
+      return c.json({ error: '距離パラメータが必要です' }, 400);
+    }
+    
+    const limitNum = parseInt(limit);
+    
+    // フィルター条件を構築
+    const conditions = [eq(raceResults.distance, parseInt(distance))];
+    
+    if (surface && surface !== 'all') {
+      conditions.push(eq(raceResults.courseType, surface as '芝' | 'ダート'));
+    }
+    
+    if (venue && venue !== 'all') {
+      conditions.push(eq(raceResults.venue, venue));
+    }
+    
+    if (className && className !== 'all') {
+      conditions.push(eq(races.className, className));
+    }
+    
+    const query = db.select({
+      raceId: raceResults.raceId,
+      date: raceResults.date,
+      raceName: raceResults.raceName,
+      venue: raceResults.venue,
+      surface: raceResults.courseType,
+      distance: raceResults.distance,
+      time: raceResults.time,
+      finishPosition: raceResults.finishPosition,
+      courseCondition: raceResults.courseCondition,
+      weather: raceResults.weather,
+      pos1c: raceResults.pos1c,
+      pos2c: raceResults.pos2c,
+      pos3c: raceResults.pos3c,
+      pos4c: raceResults.pos4c,
+      horseName: horses.name,
+      weight: raceResults.weight,
+      lastThreeFurlong: raceResults.lastThreeFurlong
+    })
+    .from(raceResults)
+    .innerJoin(races, eq(raceResults.raceId, races.raceId))
+    .innerJoin(horses, eq(raceResults.horseId, horses.id))
+    .where(and(...conditions))
+    .orderBy(desc(raceResults.date))
+    .limit(limitNum);
+    
+    const results = await query;
+    
+    // 統計情報を計算
+    const times = results
+      .map(r => {
+        const timeStr = String(r.time);
+        if (timeStr.includes(':')) {
+          // "1:23.4"形式
+          const [minutes, seconds] = timeStr.split(':');
+          return parseInt(minutes) * 60 + parseFloat(seconds);
+        } else {
+          // 数値形式（秒）
+          return parseFloat(timeStr);
+        }
+      })
+      .filter(t => !isNaN(t) && t > 0);
+    
+    const stats = {
+      count: times.length,
+      average: times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0,
+      fastest: times.length > 0 ? Math.min(...times) : 0,
+      slowest: times.length > 0 ? Math.max(...times) : 0,
+      median: times.length > 0 ? times.sort((a, b) => a - b)[Math.floor(times.length / 2)] : 0
+    };
+    
+    return c.json({
+      results,
+      stats,
+      filters: { distance, surface, venue, class: className, limit: limitNum }
+    });
+  } catch (error) {
+    console.error('Error getting distance times analysis:', error);
+    return c.json({ error: '距離別時間分析の取得に失敗しました' }, 500);
+  }
+});
+
+// 分析用API: クラス別分析
+app.get('/api/analysis/class-analysis', async (c) => {
+  try {
+    const db = createDb(c.env.DB);
+    const { className, surface, venue, limit = '50' } = c.req.query();
+    
+    if (!className) {
+      return c.json({ error: 'クラス名パラメータが必要です' }, 400);
+    }
+    
+    const limitNum = parseInt(limit);
+    
+    // フィルター条件を構築
+    const conditions = [eq(races.className, className)];
+    
+    if (surface && surface !== 'all') {
+      conditions.push(eq(raceResults.courseType, surface as '芝' | 'ダート'));
+    }
+    
+    if (venue && venue !== 'all') {
+      conditions.push(eq(raceResults.venue, venue));
+    }
+    
+    const query = db.select({
+      raceId: raceResults.raceId,
+      date: raceResults.date,
+      raceName: raceResults.raceName,
+      venue: raceResults.venue,
+      surface: raceResults.courseType,
+      distance: raceResults.distance,
+      time: raceResults.time,
+      finishPosition: raceResults.finishPosition,
+      courseCondition: raceResults.courseCondition,
+      weather: raceResults.weather,
+      pos1c: raceResults.pos1c,
+      pos2c: raceResults.pos2c,
+      pos3c: raceResults.pos3c,
+      pos4c: raceResults.pos4c,
+      horseName: horses.name,
+      weight: raceResults.weight,
+      lastThreeFurlong: raceResults.lastThreeFurlong
+    })
+    .from(raceResults)
+    .innerJoin(races, eq(raceResults.raceId, races.raceId))
+    .innerJoin(horses, eq(raceResults.horseId, horses.id))
+    .where(and(...conditions))
+    .orderBy(desc(raceResults.date))
+    .limit(limitNum);
+    
+    const results = await query;
+    
+    // 距離別にグループ化
+    const byDistance = results.reduce((acc, result) => {
+      const distance = result.distance;
+      if (!acc[distance]) {
+        acc[distance] = [];
+      }
+      acc[distance].push(result);
+      return acc;
+    }, {} as Record<number, typeof results>);
+    
+    // 各距離の統計を計算
+    const distanceStats = Object.entries(byDistance).map(([distance, races]) => {
+      const times = races
+        .map(r => {
+          const timeStr = String(r.time);
+          if (timeStr.includes(':')) {
+            const [minutes, seconds] = timeStr.split(':');
+            return parseInt(minutes) * 60 + parseFloat(seconds);
+          } else {
+            return parseFloat(timeStr);
+          }
+        })
+        .filter(t => !isNaN(t) && t > 0);
+      
+      return {
+        distance: parseInt(distance),
+        count: times.length,
+        average: times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0,
+        fastest: times.length > 0 ? Math.min(...times) : 0,
+        slowest: times.length > 0 ? Math.max(...times) : 0
+      };
+    });
+    
+    return c.json({
+      results,
+      distanceStats,
+      filters: { className, surface, venue, limit: limitNum }
+    });
+  } catch (error) {
+    console.error('Error getting class analysis:', error);
+    return c.json({ error: 'クラス別分析の取得に失敗しました' }, 500);
   }
 });
 

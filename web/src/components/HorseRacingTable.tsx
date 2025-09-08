@@ -12,15 +12,17 @@ import {
   TableHead,
   TableRow,
   Chip,
-  Tooltip
+  Tooltip,
 } from "@mui/material";
 import './horse-info.css';
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, BarChart3, List } from "lucide-react";
 import { HorseEntry } from '../types/horse';
 import { parseRaceId, formatRaceIdDisplay } from '../utils/raceUtils';
 import { AdminService, RaceResultData } from '../services/adminService';
 import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
+import HorseListSidebar from './HorseListSidebar';
+import AnalysisSidebar from './AnalysisSidebar';
 
 export default function HorseRacingTable() {
   const { raceId } = useParams<{ raceId: string }>();
@@ -34,6 +36,8 @@ export default function HorseRacingTable() {
     gte_10_0: '10.0～'
   };
   const [selectedRange, setSelectedRange] = useState<CushionRange>('9_0_9_9');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [analysisSidebarOpen, setAnalysisSidebarOpen] = useState(false);
 
   const [raceInfo, setRaceInfo] = useState<{
     raceId: string;
@@ -56,6 +60,8 @@ export default function HorseRacingTable() {
   });
 
   const [entries, setEntries] = useState<HorseEntry[]>([]);
+  // 前走レースID -> 頭数
+  const [fieldSizeCache, setFieldSizeCache] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   // レースレベル（賞金合計/平均）キャッシュ
@@ -101,6 +107,41 @@ export default function HorseRacingTable() {
           resultsMap.set(e.horseId, res);
         }));
 
+        // 前走のユニークなレースIDを収集
+        const prevRaceIds = Array.from(
+          new Set<string>(
+            es.flatMap(e => (resultsMap.get(e.horseId) || []).map(r => r.raceId))
+          )
+        );
+
+        // 頭数を一括取得（races.fieldSize → race_results件数 → race_entries件数 の順でフォールバック）
+        const fsPairs = await Promise.all(prevRaceIds.map(async (rid) => {
+          // 1) races.fieldSize
+          try {
+            const info = await admin.getRace(rid);
+            if (info && typeof info.fieldSize === 'number' && info.fieldSize > 0) {
+              return [rid, info.fieldSize] as const;
+            }
+          } catch {}
+          // 2) race_results の件数
+          try {
+            const rs = await admin.getRaceResults(rid);
+            if (Array.isArray(rs) && rs.length > 0) {
+              return [rid, rs.length] as const;
+            }
+          } catch {}
+          // 3) race_entries の件数
+          try {
+            const ents = await admin.getRaceEntries(rid);
+            if (Array.isArray(ents) && ents.length > 0) {
+              return [rid, ents.length] as const;
+            }
+          } catch {}
+          return [rid, 0] as const;
+        }));
+        const fsMap = new Map<string, number>(fsPairs);
+        setFieldSizeCache(fsMap);
+
         const mapped: HorseEntry[] = es.map((e) => {
           const horse = e.horse as any;
           const sex = (horse?.sex as string) || '';
@@ -116,7 +157,7 @@ export default function HorseRacingTable() {
               surface: r.courseType,
               going: r.courseCondition,
               class: r.raceName,
-              fieldSize: 0,
+              fieldSize: fsMap.get(r.raceId) ?? fieldSizeCache.get(r.raceId) ?? 0,
               barrier: 0,
               position: r.finishPosition,
               time: r.time,
@@ -325,6 +366,22 @@ export default function HorseRacingTable() {
       <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
         <Button startIcon={<ArrowLeft />} onClick={() => navigate('/')} variant="outlined">
           トップに戻る
+        </Button>
+        <Button 
+          startIcon={<List />} 
+          onClick={() => setSidebarOpen(true)} 
+          variant="contained"
+          color="primary"
+        >
+          出走馬一覧
+        </Button>
+        <Button 
+          startIcon={<BarChart3 />} 
+          onClick={() => setAnalysisSidebarOpen(true)} 
+          variant="contained"
+          color="secondary"
+        >
+          レース分析
         </Button>
         <Box sx={{ flex: 1 }}>
           <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
@@ -671,6 +728,29 @@ export default function HorseRacingTable() {
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* 出走馬一覧サイドバー */}
+      <HorseListSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        horses={entries}
+        raceInfo={{
+          raceName: raceInfo.raceName,
+          venue: raceInfo.venue,
+          distance: raceInfo.distance,
+          surface: raceInfo.surface
+        }}
+      />
+
+      {/* 分析サイドバー */}
+      <AnalysisSidebar
+        open={analysisSidebarOpen}
+        onClose={() => setAnalysisSidebarOpen(false)}
+        raceId={raceId || ''}
+        currentDistance={raceInfo.distance}
+        currentSurface={raceInfo.surface}
+        currentVenue={raceInfo.venue}
+      />
     </Box>
   );
 }

@@ -1,5 +1,5 @@
 # データベース起動
-`npx wrangler dev --local`
+`npx wrangler dev --local --ip=0.0.0.0`
 
 # フロント起動
 ` cd web && npm run dev`
