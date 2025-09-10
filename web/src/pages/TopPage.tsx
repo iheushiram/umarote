@@ -45,14 +45,10 @@ const DateTabs = ({ selectedDate, onDateChange }: DateTabsProps) => {
       setError(null);
       try {
         const dates = await getAvailableDates();
-        console.log('=== DateTabs デバッグ ===');
-        console.log('取得した日付:', dates);
-        console.log('現在のselectedDate:', selectedDate);
         setAvailableDates(dates);
         
         // If no date is selected or selected date is not available, select the first available date
         if (dates.length > 0 && (!selectedDate || !dates.includes(selectedDate))) {
-          console.log('最初の日付を選択:', dates[0]);
           onDateChange(dates[0]);
         }
       } catch (err) {
@@ -162,10 +158,7 @@ interface RaceCardProps {
 }
 
 const RaceCard = ({ race, entries, onClick }: RaceCardProps) => {
-  console.log(`=== RaceCard デバッグ ===`);
-  console.log(`Race ID: ${race.raceId}`);
-  console.log(`Entries:`, entries);
-  console.log(`Entries length:`, entries?.length);
+  // debug logs removed
   const getGradeColor = (grade?: string) => {
     switch (grade) {
       case 'G1': return 'secondary';
@@ -368,10 +361,7 @@ export default function TopPage() {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   
-  console.log('=== TopPage 初期化デバッグ ===');
-  console.log('selectedDate:', selectedDate);
-  console.log('races length:', races.length);
-  console.log('raceEntries keys:', Object.keys(raceEntries));
+  // debug logs removed
 
   // 選択日付をURLクエリとlocalStorageに同期
   useEffect(() => {
@@ -405,12 +395,7 @@ export default function TopPage() {
 
   // Load races and entries when date changes
   useEffect(() => {
-    console.log('=== useEffect 実行デバッグ ===');
-    console.log('selectedDate:', selectedDate);
-    console.log('selectedDate truthy:', !!selectedDate);
-    
     if (!selectedDate) { 
-      console.log('selectedDateが空のため処理をスキップ');
       setLoading(false);
       return;
     }
@@ -419,22 +404,14 @@ export default function TopPage() {
       setLoading(true);
       setError(null);
       try {
-        console.log('Selected date:', selectedDate);
-        
         // まずレース情報を取得
         const raceData = await getRacesByDate(selectedDate);
-        console.log('=== トップページデバッグ ===');
-        console.log('選択日付:', selectedDate);
-        console.log('Race data:', raceData);
         
         // レース情報が取得できた場合のみ出馬表を取得
         if (raceData.length > 0) {
           const entriesData = await getRaceEntriesByDate(selectedDate);
-          console.log('Entries data:', entriesData);
-          console.log('Entries data keys:', Object.keys(entriesData));
           setRaceEntries(entriesData);
         } else {
-          console.log('レースデータが空のため出馬表は取得しません');
           setRaceEntries({});
         }
         

@@ -680,12 +680,24 @@ export function processJapaneseCsvRow(
     dayNumber: parseInt(dayNum),
     raceNo: raceNo,
     className: (() => {
-      const raceName = rowData['レース名'] || '';
-      if (raceName.includes('G1') || raceName.includes('Ⅰ')) return 'G1';
-      if (raceName.includes('G2') || raceName.includes('Ⅱ')) return 'G2';
-      if (raceName.includes('G3') || raceName.includes('Ⅲ')) return 'G3';
-      if (raceName.includes('OP') || raceName.includes('L')) return 'OP';
-      return '未勝利';
+      const normalizeDigitsLocal = (s: string) => s.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+      const normalizeCsvClassLocal = (input?: string): string | undefined => {
+        if (!input) return undefined;
+        const s = normalizeDigitsLocal(String(input)).replace(/\s+/g, '').toUpperCase();
+        if (s.includes('G1') || s.includes('Ｇ1') || s.includes('ＧＩ')) return 'G1';
+        if (s.includes('G2') || s.includes('Ｇ2') || s.includes('ＧＩＩ')) return 'G2';
+        if (s.includes('G3') || s.includes('Ｇ3') || s.includes('ＧＩＩＩ')) return 'G3';
+        if (s.includes('OP') || s.includes('ＯＰ') || s.includes('ｵｰﾌﾟﾝ') || s.includes('L')) return 'OP(L)';
+        if (s.includes('重賞')) return '重賞';
+        if (s.includes('新馬')) return '新馬';
+        if (s.includes('未勝利')) return '未勝利';
+        if (s.includes('1勝')) return '1勝';
+        if (s.includes('2勝')) return '2勝';
+        if (s.includes('3勝')) return '3勝';
+        return undefined;
+      };
+      const fromCol = normalizeCsvClassLocal(rowData['クラス名'] || rowData['クラス']);
+      return fromCol || normalizeCsvClassLocal(rowData['レース名'] || '') || '未勝利';
     })(),
     fieldSize: (() => { const f = (rowData['頭数'] || '').replace(/[^\d]/g, ''); return f ? parseInt(f) : undefined; })(),
   };
@@ -791,6 +803,7 @@ export interface RaceDataFromCsv {
   direction: '右' | '左';
   trackCond: '良' | '稍' | '重' | '不良';
   fieldSize?: number;
+  offAt?: string;
 }
 
 // Extract race information from CSV data
@@ -950,19 +963,25 @@ export function extractRaceFromCsvData(
   const venueCode = getVenueCode(venueName);
   const raceId = `${year}${venueCode}${String(parseInt(meetingNum)).padStart(2, '0')}${String(parseInt(dayNum)).padStart(2, '0')}${String(raceNo).padStart(2, '0')}`;
   
-  // クラス名の推定
-  let className = '';
-  if (finalRaceName.includes('G1') || finalRaceName.includes('Ⅰ')) {
-    className = 'G1';
-  } else if (finalRaceName.includes('G2') || finalRaceName.includes('Ⅱ')) {
-    className = 'G2';
-  } else if (finalRaceName.includes('G3') || finalRaceName.includes('Ⅲ')) {
-    className = 'G3';
-  } else if (finalRaceName.includes('OP')) {
-    className = 'OP';
-  } else {
-    className = '未勝利'; // デフォルト
-  }
+  // クラス名の推定（クラス名列優先 → レース名）
+  const normalizeDigitsLocal = (s: string) => s.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  const normalizeCsvClass = (input?: string): string | undefined => {
+    if (!input) return undefined;
+    const s = normalizeDigitsLocal(String(input)).replace(/\s+/g, '').toUpperCase();
+    if (s.includes('G1') || s.includes('Ｇ1') || s.includes('ＧＩ')) return 'G1';
+    if (s.includes('G2') || s.includes('Ｇ2') || s.includes('ＧＩＩ')) return 'G2';
+    if (s.includes('G3') || s.includes('Ｇ3') || s.includes('ＧＩＩＩ')) return 'G3';
+    if (s.includes('OP') || s.includes('ＯＰ') || s.includes('ｵｰﾌﾟﾝ') || s.includes('L')) return 'OP(L)';
+    if (s.includes('重賞')) return '重賞';
+    if (s.includes('新馬')) return '新馬';
+    if (s.includes('未勝利')) return '未勝利';
+    if (s.includes('1勝')) return '1勝';
+    if (s.includes('2勝')) return '2勝';
+    if (s.includes('3勝')) return '3勝';
+    return undefined;
+  };
+  const classFromColumn = normalizeCsvClass(rowData['クラス名'] || rowData['クラス']);
+  let className = classFromColumn || normalizeCsvClass(finalRaceName) || '未勝利';
   
   // コース種別の変換 - 距離フィールドの先頭文字から判定
   let surface: '芝' | 'ダート' = 'ダート'; // デフォルト
@@ -1005,7 +1024,15 @@ export function extractRaceFromCsvData(
     distance: distanceNum,
     direction,
     trackCond,
-    fieldSize: fieldSize ? parseInt(fieldSize) : undefined
+    fieldSize: fieldSize ? parseInt(fieldSize) : undefined,
+    offAt: (() => {
+      const raw = rowData['発走時刻'] || rowData['発走'] || rowData['発走時間'] || '';
+      const digits = String(raw).replace(/[^0-9]/g, '');
+      if (digits.length === 4) return `${digits.slice(0,2)}:${digits.slice(2)}`;
+      const m = String(raw).match(/^(\d{1,2}):(\d{2})$/);
+      if (m) return `${m[1].padStart(2,'0')}:${m[2]}`;
+      return undefined;
+    })()
   };
 }
 

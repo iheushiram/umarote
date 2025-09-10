@@ -346,6 +346,40 @@ export class AdminService {
     }
   }
 
+  // 分析: 同距離（＋任意の面/会場/クラス）でのタイム統計を取得
+  async getDistanceTimeStats(params: {
+    distance: number | string;
+    surface?: '芝' | 'ダート' | 'all';
+    venue?: string | 'all';
+    className?: string | 'all';
+    from?: string; // YYYYMMDD
+    to?: string;   // YYYYMMDD (非含む)
+    winnersOnly?: boolean;
+    limit?: number;
+  }): Promise<{ stats: { count: number; average: number; fastest: number; slowest: number; median: number } } | null> {
+    try {
+      const qs = new URLSearchParams();
+      qs.set('distance', String(params.distance));
+      if (params.surface) qs.set('surface', params.surface);
+      if (params.venue) qs.set('venue', params.venue);
+      if (params.className) qs.set('class', params.className);
+      if (params.from) qs.set('from', params.from);
+      if (params.to) qs.set('to', params.to);
+      if (params.winnersOnly) qs.set('winnersOnly', '1');
+      qs.set('limit', String(params.limit ?? 2000));
+
+      const response = await fetch(`${API_BASE_URL}/api/analysis/distance-times?${qs}`);
+      if (!response.ok) {
+        throw new Error('距離別タイム統計の取得に失敗しました');
+      }
+      const data = await response.json();
+      return { stats: data.stats };
+    } catch (error) {
+      console.error('Error getting distance time stats:', error);
+      return null;
+    }
+  }
+
   async getAvailableDates(): Promise<string[]> {
     try {
       console.log('=== adminService.getAvailableDates デバッグ ===');

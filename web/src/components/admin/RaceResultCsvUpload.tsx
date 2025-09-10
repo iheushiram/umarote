@@ -115,6 +115,12 @@ export default function RaceResultCsvUpload() {
     
     function processCsvText(decodedText: string) {
       const lines = decodedText.split(/\r?\n/).filter(line => line.trim());
+      const origLog = console.log;
+      const origWarn = console.warn;
+      // CSV解析時は情報ログ/警告を抑制（失敗時はconsole.errorのみ表示）
+      console.log = () => {};
+      console.warn = () => {};
+      try {
 
       // 会場名の変換マッピング
       const venueMapping: Record<string, string> = {
@@ -165,8 +171,7 @@ export default function RaceResultCsvUpload() {
         return header;
       });
       
-      console.log('Raw headers:', rawHeaders);
-      console.log('Fixed headers:', headers);
+      // debug logs removed
       
       const errors: string[] = [];
       const expectedHeaders = [
@@ -264,15 +269,12 @@ export default function RaceResultCsvUpload() {
       
       setPreviewData(data);
       
-      console.log('Preview data set:', data.slice(0, 2)); // 最初の2件をログ出力
-      
       // Extract horse data if Japanese CSV format
       if (isJapaneseCsv && includeHorseData) {
         try {
           const csvRows = lines.slice(1).map(line => splitCsvLine(line));
           const horses = extractHorsesFromCsvData(headers, csvRows);
           setPreviewHorses(horses);
-          console.log('Extracted horses:', horses.slice(0, 2)); // 最初の2件をログ出力
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : '不明なエラー';
           errors.push(`馬データの抽出に失敗しました - ${errorMessage}`);
@@ -286,18 +288,9 @@ export default function RaceResultCsvUpload() {
       // Extract race data if Japanese CSV format and race data checkbox is checked
       if (isJapaneseCsv && includeRaceData) {
         try {
-          console.log('レース抽出開始 - ヘッダー:', headers);
-          console.log('レース抽出開始 - データ行数:', lines.length - 1);
-          
           const csvRows = lines.slice(1).map(line => splitCsvLine(line));
           const races = extractRacesFromCsvData(headers, csvRows);
-          
-          console.log('レース抽出結果:', races.length, '件');
-          if (races.length > 0) {
-            console.log('抽出されたレース例:', races.slice(0, 2));
-          } else {
-            console.warn('レースが抽出されませんでした。ヘッダー確認:', headers);
-            console.warn('CSVの最初の行例:', csvRows[0]);
+          if (races.length === 0) {
             
             // レース抽出に失敗した場合の警告メッセージ
             const raceExtractionWarning = 'レース情報の抽出ができませんでした。CSVファイルに「日付」「レース名」「開催」などのヘッダーが含まれているか確認してください。';
@@ -311,8 +304,7 @@ export default function RaceResultCsvUpload() {
           console.error('エラー発生時のヘッダー:', headers);
           setPreviewRaces([]);
         }
-              } else {
-          console.log('レース抽出スキップ - 日本語CSV:', isJapaneseCsv, ', レースデータ有効:', includeRaceData);
+      } else {
           setPreviewRaces([]);
         }
         
@@ -322,7 +314,6 @@ export default function RaceResultCsvUpload() {
             const csvRows = lines.slice(1).map(line => splitCsvLine(line));
             const entries = extractRaceEntriesFromCsvData(headers, csvRows);
             setPreviewEntries(entries);
-            console.log('Extracted entries:', entries.slice(0, 2)); // 最初の2件をログ出力
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : '不明なエラー';
             errors.push(`出馬表データの抽出に失敗しました - ${errorMessage}`);
@@ -335,6 +326,10 @@ export default function RaceResultCsvUpload() {
         
         // 全ての処理が完了した後にエラーを設定
         setValidationErrors(errors);
+      } finally {
+        console.log = origLog;
+        console.warn = origWarn;
+      }
     };
   };
 

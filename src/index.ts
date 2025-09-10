@@ -4,7 +4,7 @@ import { createDb } from './db/db';
 import { horses, races, raceResults, raceEntries, trackConditions } from './db/schema';
 import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
 import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry } from './db/schema';
-import { eq, sql, and, inArray, desc, lt, lte } from 'drizzle-orm';
+import { eq, sql, and, inArray, desc, lt, lte, gte } from 'drizzle-orm';
 
 type Bindings = {
   DB: D1Database;
@@ -19,6 +19,114 @@ app.use('/*', cors());
 app.get('/', (c) => {
   return c.json({ message: 'Umarote API is running' });
 });
+
+// ===== ヘルパー =====
+function toSecondsFromRaceTime(value: string | number): number {
+  if (value === null || value === undefined) return 0;
+  const s = String(value).trim();
+  if (!s) return 0;
+  if (s.includes(':')) {
+    const [m, rest] = s.split(':');
+    const sec = parseFloat(rest);
+    const min = parseInt(m, 10) || 0;
+    return min * 60 + (isNaN(sec) ? 0 : sec);
+  }
+  // 数値形式（例: 1457 → 1分45秒7）
+  const n = parseInt(s, 10);
+  if (isNaN(n) || n <= 0) return 0;
+  const minutes = Math.floor(n / 1000);
+  const secTenth = n % 1000;
+  const seconds = Math.floor(secTenth / 10);
+  const tenth = secTenth % 10;
+  return minutes * 60 + seconds + tenth / 10;
+}
+
+function normalizeDigits(input: string): string {
+  const z2h: Record<string, string> = {
+    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9'
+  };
+  return input.replace(/[０-９]/g, (ch) => z2h[ch] || ch);
+}
+
+function inferClassNameFromRaceName(name?: string): string | undefined {
+  if (!name) return undefined;
+  const n = normalizeDigits(name);
+  if (/G\s*1|Ｇ\s*1/i.test(n)) return 'G1';
+  if (/G\s*2|Ｇ\s*2/i.test(n)) return 'G2';
+  if (/G\s*3|Ｇ\s*3/i.test(n)) return 'G3';
+  if (/オープン|ＯＰ|OP/i.test(n)) return 'OP(L)';
+  if (/新馬/.test(n)) return '新馬';
+  if (/未勝利/.test(n)) return '未勝利';
+  if (/1\s*勝/.test(n)) return '1勝';
+  if (/2\s*勝/.test(n)) return '2勝';
+  if (/3\s*勝/.test(n)) return '3勝';
+  return undefined;
+}
+
+// CSVのクラス名を正規化（要求仕様）とgrade算出
+function normalizeCsvClass(input?: string): { className?: string; grade?: 'OP' | 'G3' | 'G2' | 'G1' } {
+  if (!input) return {};
+  const s = normalizeDigits(String(input)).replace(/\s+/g, '').toUpperCase();
+  if (s.includes('G1') || s.includes('Ｇ1') || s.includes('ＧＩ')) return { className: 'G1', grade: 'G1' };
+  if (s.includes('G2') || s.includes('Ｇ2') || s.includes('ＧＩＩ')) return { className: 'G2', grade: 'G2' };
+  if (s.includes('G3') || s.includes('Ｇ3') || s.includes('ＧＩＩＩ')) return { className: 'G3', grade: 'G3' };
+  if (s.includes('OP') || s.includes('ＯＰ') || s.includes('オープン')) return { className: 'OP(L)', grade: 'OP' };
+  if (s.includes('重賞')) return { className: '重賞', grade: undefined };
+  if (s.includes('新馬')) return { className: '新馬', grade: undefined };
+  if (s.includes('未勝利')) return { className: '未勝利', grade: undefined };
+  if (s.includes('1勝')) return { className: '1勝', grade: undefined };
+  if (s.includes('2勝')) return { className: '2勝', grade: undefined };
+  if (s.includes('3勝')) return { className: '3勝', grade: undefined };
+  return {};
+}
+
+function normalizeOffAt(input?: string): string | undefined {
+  if (!input) return undefined;
+  const s = String(input).trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (m) {
+    const hh = String(parseInt(m[1], 10)).padStart(2, '0');
+    const mm = m[2];
+    return `${hh}:${mm}`;
+  }
+  // 例: 1640 → 16:40
+  const digits = s.replace(/[^0-9]/g, '');
+  if (digits.length === 4) {
+    return `${digits.slice(0,2)}:${digits.slice(2)}`;
+  }
+  return undefined;
+}
+
+function classNameSynonyms(input: string): string[] {
+  const s = normalizeDigits(input || '').replace(/\s+/g, '');
+  const syn = new Set<string>();
+  if (!s) return [];
+
+  if (s.includes('1勝')) {
+    ['1勝','1勝クラス','1勝ｸﾗｽ','１勝','１勝クラス','１勝ｸﾗｽ'].forEach(v => syn.add(v));
+  } else if (s.includes('2勝')) {
+    ['2勝','2勝クラス','2勝ｸﾗｽ','２勝','２勝クラス','２勝ｸﾗｽ'].forEach(v => syn.add(v));
+  } else if (s.includes('3勝')) {
+    ['3勝','3勝クラス','3勝ｸﾗｽ','３勝','３勝クラス','３勝ｸﾗｽ'].forEach(v => syn.add(v));
+  } else if (/G\s*1|Ｇ\s*1/i.test(s) || s.toUpperCase()==='G1') {
+    ['G1','Ｇ1','ＧＩ'].forEach(v => syn.add(v));
+  } else if (/G\s*2|Ｇ\s*2/i.test(s) || s.toUpperCase()==='G2') {
+    ['G2','Ｇ2','ＧＩＩ'].forEach(v => syn.add(v));
+  } else if (/G\s*3|Ｇ\s*3/i.test(s) || s.toUpperCase()==='G3') {
+    ['G3','Ｇ3','ＧＩＩＩ'].forEach(v => syn.add(v));
+  } else if (s.includes('OP') || s.includes('ＯＰ') || s.includes('オープン')) {
+    ['OP(L)','OP','ＯＰ','オープン'].forEach(v => syn.add(v));
+  } else if (s.includes('重賞')) {
+    ['G1','G2','G3','重賞'].forEach(v => syn.add(v));
+  } else if (s.includes('新馬')) {
+    ['新馬'].forEach(v => syn.add(v));
+  } else if (s.includes('未勝利')) {
+    ['未勝利'].forEach(v => syn.add(v));
+  } else {
+    syn.add(s);
+  }
+  return Array.from(syn);
+}
 
 // 馬データのCRUD操作
 app.get('/api/horses', async (c) => {
@@ -342,6 +450,11 @@ app.post('/api/race-results-with-horses', async (c) => {
     for (const resultData of resultsData) {
       if (resultData.raceId && !raceMap.has(resultData.raceId)) {
         // レース結果からレース情報を推定
+        const classFromResult = (resultData as any).className || (resultData as any).class || undefined;
+        const offAtFromResult = (resultData as any).offAt || (resultData as any).発走時刻 || undefined;
+        const { className: clsCsv, grade: gradeCsv } = normalizeCsvClass(classFromResult);
+        const offAtCsv = normalizeOffAt(offAtFromResult);
+
         const raceData: NewRace = {
           raceId: resultData.raceId,
           date: resultData.date,
@@ -350,7 +463,7 @@ app.post('/api/race-results-with-horses', async (c) => {
           dayNumber: (resultData as any).dayNumber || 1,
           raceNo: (resultData as any).raceNo || 1,
           raceName: resultData.raceName,
-          className: (resultData as any).className || '未勝利',
+          className: clsCsv || (resultData as any).className || inferClassNameFromRaceName(resultData.raceName) || '未勝利',
           surface: resultData.courseType,
           distance: resultData.distance,
           direction: resultData.direction || '右',
@@ -358,6 +471,8 @@ app.post('/api/race-results-with-horses', async (c) => {
           fieldSize: (resultData as any).fieldSize,
           win5: false,
           status: '確定',
+          offAt: offAtCsv,
+          grade: gradeCsv,
         };
         raceMap.set(resultData.raceId, raceData);
       }
@@ -385,6 +500,8 @@ app.post('/api/race-results-with-horses', async (c) => {
             direction: raceData.direction,
             trackCond: raceData.trackCond,
             fieldSize: raceData.fieldSize,
+            offAt: raceData.offAt,
+            grade: raceData.grade,
             win5: raceData.win5,
             status: raceData.status,
             updatedAt: sql`CURRENT_TIMESTAMP`
@@ -487,24 +604,34 @@ app.post('/api/race-results-with-horses', async (c) => {
         earnedMoney: (resultData as any).earnedMoney || null
       };
 
-      await db.insert(raceEntries)
-        .values({
-          ...entryData,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .onConflictDoUpdate({
-          target: [raceEntries.raceId, raceEntries.horseId],
-          set: {
-            // レース結果から得られる情報を出馬表に反映
+      // (race_id, horse_id) の複合キーで手動UPSERT（UNIQUE制約がないため）
+      const existing = await db
+        .select({ id: raceEntries.id })
+        .from(raceEntries)
+        .where(and(
+          eq(raceEntries.raceId, entryData.raceId),
+          eq(raceEntries.horseId, entryData.horseId)
+        ))
+        .get();
+
+      if (existing?.id !== undefined && existing?.id !== null) {
+        await db.update(raceEntries)
+          .set({
             popularity: resultData.popularity,
             jockey: resultData.jockey,
             weight: resultData.weight,
-            // 賞金情報
             prizeMoney: (resultData as any).prizeMoney || null,
             earnedMoney: (resultData as any).earnedMoney || null,
             updatedAt: sql`CURRENT_TIMESTAMP`
-          }
-        });
+          })
+          .where(eq(raceEntries.id, existing.id));
+      } else {
+        await db.insert(raceEntries)
+          .values({
+            ...entryData,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          });
+      }
     }
 
     // 4. レース結果をUPSERT
@@ -679,6 +806,10 @@ app.post('/api/race-entries-csv', async (c) => {
       const horseId = `20${row['血統登録番号']}`;
       
       // レース情報の作成
+      const csvClassRaw = row['クラス名'] || row['クラス'] || '';
+      const { className: clsCsv, grade: gradeCsv } = normalizeCsvClass(csvClassRaw);
+      const offAtCsv = normalizeOffAt(row['発走時刻'] || row['発走'] || row['発走時間']);
+
       const raceData: NewRace = {
         raceId: raceId,
         date: normalizedDate,
@@ -687,17 +818,27 @@ app.post('/api/race-entries-csv', async (c) => {
         dayNumber: parseInt(String(day)),
         raceNo: parseInt(row['R']),
         raceName: row['レース名'],
-        className: row['レース名'].includes('未勝利') ? '未勝利' : 
-                  row['レース名'].includes('1勝') ? '1勝クラス' :
-                  row['レース名'].includes('2勝') ? '2勝クラス' :
-                  row['レース名'].includes('3勝') ? '3勝クラス' : 'OP',
-        surface: row['芝・ダ'] === '芝' ? '芝' : 'ダート',
-        distance: parseInt(row['距離']),
+        className: clsCsv || inferClassNameFromRaceName(row['レース名']) || '未勝利',
+        surface: (() => {
+          const sd = row['芝・ダ'];
+          if (sd === '芝') return '芝';
+          if (sd === 'ダート' || sd === 'ダ') return 'ダート';
+          const distStr = String(row['距離'] || '');
+          if (/^芝/.test(distStr)) return '芝';
+          if (/^ダ/.test(distStr)) return 'ダート';
+          return 'ダート';
+        })(),
+        distance: (() => {
+          const d = String(row['距離'] || '').replace(/[^0-9]/g, '');
+          return d ? parseInt(d) : 0;
+        })(),
         direction: '右', // デフォルト値
         trackCond: '良', // デフォルト値
         fieldSize: parseInt(row['頭数']) || 0,
         win5: false,
         status: '発売中',
+        offAt: offAtCsv,
+        grade: gradeCsv,
       };
       
       // 馬の基本情報の作成
@@ -784,6 +925,8 @@ app.post('/api/race-entries-csv', async (c) => {
             direction: raceData.direction,
             trackCond: raceData.trackCond,
             fieldSize: raceData.fieldSize,
+            offAt: raceData.offAt,
+            grade: raceData.grade,
             win5: raceData.win5,
             status: raceData.status,
             updatedAt: sql`CURRENT_TIMESTAMP`
@@ -816,16 +959,20 @@ app.post('/api/race-entries-csv', async (c) => {
         });
     }
 
-    // 出馬表データをUPSERT（重複時は上書き）
+    // 出馬表データをUPSERT（重複時は上書き）※ UNIQUE制約なしのため手動UPSERT
     for (const entryData of entriesData) {
-      await db.insert(raceEntries)
-        .values({
-          ...entryData,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .onConflictDoUpdate({
-          target: [raceEntries.raceId, raceEntries.horseId],
-          set: {
+      const existing = await db
+        .select({ id: raceEntries.id })
+        .from(raceEntries)
+        .where(and(
+          eq(raceEntries.raceId, entryData.raceId),
+          eq(raceEntries.horseId, entryData.horseId)
+        ))
+        .get();
+
+      if (existing?.id !== undefined && existing?.id !== null) {
+        await db.update(raceEntries)
+          .set({
             date: entryData.date,
             frameNo: entryData.frameNo,
             horseNo: entryData.horseNo,
@@ -862,8 +1009,15 @@ app.post('/api/race-entries-csv', async (c) => {
             prizeMoney: entryData.prizeMoney,
             earnedMoney: entryData.earnedMoney,
             updatedAt: sql`CURRENT_TIMESTAMP`
-          }
-        });
+          })
+          .where(eq(raceEntries.id, existing.id));
+      } else {
+        await db.insert(raceEntries)
+          .values({
+            ...entryData,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          });
+      }
     }
 
     return c.json({ 
@@ -970,7 +1124,7 @@ app.patch('/api/races/:raceId/prize-money', async (c) => {
 app.get('/api/analysis/distance-times', async (c) => {
   try {
     const db = createDb(c.env.DB);
-    const { distance, surface, venue, class: className, limit = '50' } = c.req.query();
+    const { distance, surface, venue, class: className, limit = '50', from, to, winnersOnly } = c.req.query();
     
     if (!distance) {
       return c.json({ error: '距離パラメータが必要です' }, 400);
@@ -990,7 +1144,21 @@ app.get('/api/analysis/distance-times', async (c) => {
     }
     
     if (className && className !== 'all') {
-      conditions.push(eq(races.className, className));
+      const syn = classNameSynonyms(className);
+      if (syn.length > 0) {
+        conditions.push(inArray(races.className, syn as any));
+      } else {
+        conditions.push(eq(races.className, className));
+      }
+    }
+    if (from) {
+      conditions.push(gte(raceResults.date, from));
+    }
+    if (to) {
+      conditions.push(lt(raceResults.date, to));
+    }
+    if (winnersOnly === '1' || winnersOnly === 'true') {
+      conditions.push(eq(raceResults.finishPosition, 1));
     }
     
     const query = db.select({
@@ -1023,17 +1191,7 @@ app.get('/api/analysis/distance-times', async (c) => {
     
     // 統計情報を計算
     const times = results
-      .map(r => {
-        const timeStr = String(r.time);
-        if (timeStr.includes(':')) {
-          // "1:23.4"形式
-          const [minutes, seconds] = timeStr.split(':');
-          return parseInt(minutes) * 60 + parseFloat(seconds);
-        } else {
-          // 数値形式（秒）
-          return parseFloat(timeStr);
-        }
-      })
+      .map(r => toSecondsFromRaceTime(r.time as any))
       .filter(t => !isNaN(t) && t > 0);
     
     const stats = {
@@ -1119,15 +1277,7 @@ app.get('/api/analysis/class-analysis', async (c) => {
     // 各距離の統計を計算
     const distanceStats = Object.entries(byDistance).map(([distance, races]) => {
       const times = races
-        .map(r => {
-          const timeStr = String(r.time);
-          if (timeStr.includes(':')) {
-            const [minutes, seconds] = timeStr.split(':');
-            return parseInt(minutes) * 60 + parseFloat(seconds);
-          } else {
-            return parseFloat(timeStr);
-          }
-        })
+        .map(r => toSecondsFromRaceTime(r.time as any))
         .filter(t => !isNaN(t) && t > 0);
       
       return {
