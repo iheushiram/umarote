@@ -747,6 +747,8 @@ interface HorseDataFromCsv {
   color: string;
   father: string;
   mother: string;
+  // 母父（任意）: オブジェクト生成側で設定しているため型にも追加
+  maternalGrandfather?: string;
   trainer: string;
   owner: string;
   breeder: string;

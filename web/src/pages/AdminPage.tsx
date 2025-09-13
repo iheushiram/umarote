@@ -12,7 +12,8 @@ import {
   Tabs,
   Tab,
 } from '@mui/material';
-import { Upload, Database, FileText } from 'lucide-react';
+import { Upload, Database, FileText, Home } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import HorseCsvUpload from '../components/admin/HorseCsvUpload';
 import RaceCsvUpload from '../components/admin/RaceCsvUpload';
 import RaceResultCsvUpload from '../components/admin/RaceResultCsvUpload';
@@ -49,6 +50,7 @@ function a11yProps(index: number) {
 
 export default function AdminPage() {
   const [tabValue, setTabValue] = useState(0);
+  const navigate = useNavigate();
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -56,9 +58,19 @@ export default function AdminPage() {
 
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
-        管理画面
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+          管理画面
+        </Typography>
+        <Button
+          variant="outlined"
+          startIcon={<Home size={16} />}
+          onClick={() => navigate('/')}
+          sx={{ minWidth: 120 }}
+        >
+          トップページ
+        </Button>
+      </Box>
       
       <Typography variant="body1" sx={{ mb: 3, color: 'text.secondary' }}>
         CSVファイルをアップロードして馬券データを管理できます

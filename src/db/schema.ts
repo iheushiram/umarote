@@ -144,5 +144,39 @@ export type Race = typeof races.$inferSelect;
 export type NewRace = typeof races.$inferInsert;
 export type RaceResult = typeof raceResults.$inferSelect;
 export type NewRaceResult = typeof raceResults.$inferInsert;
+// 馬場詳細情報テーブル（クッション値・含水率の詳細測定データ）
+export const trackConditionDetails = sqliteTable('track_condition_details', {
+  id: text('id').primaryKey(),
+  // 開催・測定日情報
+  meetingNumber: integer('meeting_number').notNull(), // 開催回数（例：2025年 第1回）
+  dayNumber: integer('day_number'), // 開催日次（第1日、第2日など、NULLの場合は非開催日）
+  measurementDate: text('measurement_date').notNull(), // 測定月日（YYYY-MM-DD形式）
+  dayOfWeek: text('day_of_week', { enum: ['月', '火', '水', '木', '金', '土', '日'] }).notNull(),
+  venue: text('venue').notNull(), // 会場（例：東京競馬場）
+  
+  // 芝コースクッション値
+  turfCourseUsed: text('turf_course_used'), // 使用コース（例：D）
+  turfCushionMeasurementTime: text('turf_cushion_measurement_time'), // 測定時刻（例：10:00）
+  turfCushionValue: real('turf_cushion_value'), // クッション値（例：9.5）
+  
+  // 含水率測定時刻
+  moistureMeasurementTime: text('moisture_measurement_time'), // 含水率測定時刻（例：08:30）
+  
+  // 芝コース含水率
+  turfMoistureBeforeGoal: real('turf_moisture_before_goal'), // 芝コース ゴール前含水率（%）
+  turfMoisture4thCorner: real('turf_moisture_4th_corner'), // 芝コース 4コーナー含水率（%）
+  
+  // ダートコース含水率
+  dirtMoistureBeforeGoal: real('dirt_moisture_before_goal'), // ダートコース ゴール前含水率（%）
+  dirtMoisture4thCorner: real('dirt_moisture_4th_corner'), // ダートコース 4コーナー含水率（%）
+  
+  // メタデータ
+  notes: text('notes'), // 備考
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
 export type RaceEntry = typeof raceEntries.$inferSelect;
 export type NewRaceEntry = typeof raceEntries.$inferInsert;
+export type TrackConditionDetail = typeof trackConditionDetails.$inferSelect;
+export type NewTrackConditionDetail = typeof trackConditionDetails.$inferInsert;

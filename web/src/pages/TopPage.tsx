@@ -20,7 +20,7 @@ import {
   useMediaQuery
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { ChevronLeft, ChevronRight, CalendarDays, Cloud, Sun, ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, Cloud, Sun, ChevronDown, ChevronUp, Settings } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { VenueBoard, Race } from '../types/horse';
@@ -468,9 +468,19 @@ export default function TopPage() {
 
   return (
     <Box>
-      <Typography variant="h4" component="h1" sx={{ mb: 3, fontWeight: 'bold' }}>
-        競馬開催情報
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+          競馬開催情報
+        </Typography>
+        <Button
+          variant="outlined"
+          startIcon={<Settings size={16} />}
+          onClick={() => navigate('/admin')}
+          sx={{ minWidth: 120 }}
+        >
+          管理画面
+        </Button>
+      </Box>
       
       {/* 日付選択 */}
       <DateTabs selectedDate={selectedDate} onDateChange={setSelectedDate} />

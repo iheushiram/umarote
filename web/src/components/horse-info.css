@@ -89,6 +89,18 @@
   .horse-info__turn{ font-size: 11px; }
 }
 
+/* 馬場替わり（芝替/ダート替）表示 */
+.horse-info__surface{
+  margin-top: 2px;
+  display: flex;
+  justify-content: flex-end;
+  color: var(--hi-muted);
+  font-size: 12px;
+}
+@media (max-width: 600px){
+  .horse-info__surface{ font-size: 11px; }
+}
+
 .horse-info__weight{ white-space:nowrap; }
 .horse-info__weight .hi-weight-diff{ margin-left:2px; }
 .hi-up   { color:var(--hi-danger); }

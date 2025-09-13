@@ -41,6 +41,7 @@ function HorseRacingTable() {
   const [selectedRange, setSelectedRange] = useState<CushionRange>('9_0_9_9');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rankPanelOpen, setRankPanelOpen] = useState(false);
+  const [rankMode, setRankMode] = useState<'prev' | 'prev2'>('prev');
   const [analysisSidebarOpen, setAnalysisSidebarOpen] = useState(false);
   const [avgTimeSec, setAvgTimeSec] = useState<number | null>(null);
   const [avgTimeCount, setAvgTimeCount] = useState<number>(0);
@@ -592,6 +593,20 @@ function HorseRacingTable() {
     return items.map((it, idx) => ({ ...it, rank: idx + 1 }));
   }, [entries, prizeMoneyCache]);
 
+  const prev2RankList: PrevRankItem[] = useMemo(() => {
+    if (!entries || entries.length === 0) return [];
+    const items = entries.map((h) => {
+      const prev2 = h.races?.[1];
+      if (!prev2) return null;
+      const info = prizeMoneyCache.get(prev2.raceId);
+      const avg = info?.avgPrize;
+      if (typeof avg !== 'number') return null;
+      return { horseId: h.horseId, horseNo: h.horseNo, name: h.name, avg, raceId: prev2.raceId, margin: prev2.margin || undefined };
+    }).filter(Boolean) as {horseId: string; horseNo: number; name: string; avg: number; raceId: string; margin?: string}[];
+    items.sort((a, b) => b.avg - a.avg);
+    return items.map((it, idx) => ({ ...it, rank: idx + 1 }));
+  }, [entries, prizeMoneyCache]);
+
   // モックのクッション値別成績（horseId -> range -> [1,2,3,other]）
   const cushionStats: Record<string, Record<CushionRange, [number, number, number, number]>> = {} as any;
 
@@ -628,7 +643,7 @@ function HorseRacingTable() {
         </Button>
         <Button 
           startIcon={<List />} 
-          onClick={() => setRankPanelOpen(v => !v)} 
+          onClick={() => { setRankMode('prev'); setRankPanelOpen(true); }} 
           variant="contained"
           color="primary"
         >
@@ -708,8 +723,15 @@ function HorseRacingTable() {
         ))}
       </Stack>
 
-      {/* 前走レベルランキング（横から出す） */}
-      <PrevRankSidebar open={rankPanelOpen} onClose={() => setRankPanelOpen(false)} items={prevRankList} />
+      {/* 前走/前前走 レベルランキング（横から出す） */}
+      <PrevRankSidebar 
+        open={rankPanelOpen} 
+        onClose={() => setRankPanelOpen(false)} 
+        itemsPrev={prevRankList}
+        itemsPrev2={prev2RankList}
+        mode={rankMode}
+        onModeChange={setRankMode}
+      />
 
       {/* スクロール監視用センチネル */}
       <Box ref={headerSentinelRef} sx={{ height: 1 }} />
@@ -856,6 +878,14 @@ function HorseRacingTable() {
                         return `${tLabel}: ${rec[0]}-${rec[1]}-${rec[2]}-${rec[3]}`;
                       })()}
                     </div>
+                    {(() => {
+                      // 前走と現走の馬場（芝/ダート）が異なる場合を表示（周り方の下）
+                      const curr = raceInfo?.surface as ('芝' | 'ダート' | undefined);
+                      const prev = h.races?.[0]?.surface as ('芝' | 'ダート' | undefined);
+                      if (!curr || !prev || curr === prev) return null;
+                      const label = curr === '芝' ? '芝替' : 'ダート替';
+                      return <div className="horse-info__surface">{label}</div>;
+                    })()}
                   </div>
                 </TableCell>
                 <TableCell align="center" sx={{ whiteSpace: 'nowrap', p: { xs: 0.25, sm: 0.5 } }}>
