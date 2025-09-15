@@ -1347,7 +1347,10 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
     
     if (entries.length === 0) return c.json({});
 
-
+    // 対象レースの offAt 等を races テーブルから取得してマージ
+    const uniqueRaceIds = Array.from(new Set(entries.map(e => e.raceId)));
+    const raceRows = await db.select().from(races).where(inArray(races.raceId, uniqueRaceIds as any));
+    const raceMap = new Map(raceRows.map(r => [r.raceId, r] as const));
 
     // レースごとに出馬表をグループ化し、レース情報も含める
     const entriesByRace = entries.reduce((acc, entry) => {
@@ -1370,7 +1373,10 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
             direction: '右', // デフォルト値
             courseConf: undefined,
             trackCond: '良', // デフォルト値
-            offAt: '00:00', // デフォルト値
+            offAt: (() => {
+              const r = raceMap.get(entry.raceId);
+              return (r && r.offAt) ? r.offAt : '00:00';
+            })(),
             grade: undefined,
             status: '発売中', // デフォルト値
             weather: undefined,

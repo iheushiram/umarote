@@ -242,7 +242,10 @@ const RaceCard = ({ race, entries, onClick }: RaceCardProps) => {
         </Box>
         
         <Typography variant="caption" color="text.secondary">
-          {race.offAt || '00:00'} {race.surface}{race.distance}m {entries?.length || race.fieldSize || 0}頭
+          {(() => {
+            const off = race.offAt || (entries && (entries as any)[race.raceId]?.raceInfo?.offAt) || '00:00';
+            return `${off} ${race.surface}${race.distance}m ${entries?.length || race.fieldSize || 0}頭`;
+          })()}
         </Typography>
         
         {/* 出馬表情報のプレビュー */}

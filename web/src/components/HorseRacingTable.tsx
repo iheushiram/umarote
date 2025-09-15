@@ -15,13 +15,16 @@ import {
   Tabs,
   Tab,
   Divider,
+  FormControl,
+  Select,
+  MenuItem,
 } from "@mui/material";
 import './horse-info.css';
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, BarChart3, List } from "lucide-react";
 import { HorseEntry } from '../types/horse';
 import { parseRaceId, formatRaceIdDisplay } from '../utils/raceUtils';
-import { AdminService, RaceResultData } from '../services/adminService';
+import { AdminService, RaceResultData, RaceData } from '../services/adminService';
 import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
 import HorseListSidebar from './HorseListSidebar';
 import AnalysisSidebar from './AnalysisSidebar';
@@ -43,6 +46,11 @@ function HorseRacingTable() {
   const [rankPanelOpen, setRankPanelOpen] = useState(false);
   const [rankMode, setRankMode] = useState<'prev' | 'prev2'>('prev');
   const [analysisSidebarOpen, setAnalysisSidebarOpen] = useState(false);
+  // 同日・同会場のレース一覧
+  const [siblingRaces, setSiblingRaces] = useState<RaceData[]>([]);
+  const [allRacesSameDate, setAllRacesSameDate] = useState<RaceData[]>([]);
+  const [venuesOnDate, setVenuesOnDate] = useState<string[]>([]);
+  const [selectedVenue, setSelectedVenue] = useState<string>("");
   const [avgTimeSec, setAvgTimeSec] = useState<number | null>(null);
   const [avgTimeCount, setAvgTimeCount] = useState<number>(0);
   const [prevAvgSpeed, setPrevAvgSpeed] = useState<number | null>(null);
@@ -300,6 +308,25 @@ function HorseRacingTable() {
             cushionValue: race.cushionValue,
             date: race.date
           });
+
+          // 同日・同会場の他レースを取得
+          try {
+            const sameDate = race.date; // YYYYMMDD
+            const racesSameDate = await admin.getRaces(sameDate);
+            setAllRacesSameDate(racesSameDate || []);
+            const venues = Array.from(new Set((racesSameDate || []).map(r => r.venue)));
+            setVenuesOnDate(venues);
+            setSelectedVenue(race.venue);
+            const sameVenue = (racesSameDate || []).filter(r => r.venue === race.venue);
+            sameVenue.sort((a, b) => a.raceNo - b.raceNo);
+            setSiblingRaces(sameVenue);
+          } catch (e) {
+            console.warn('同日レース一覧の取得に失敗:', e);
+            setAllRacesSameDate([]);
+            setVenuesOnDate([]);
+            setSelectedVenue("");
+            setSiblingRaces([]);
+          }
         }
 
         const es = await admin.getRaceEntries(raceId as string);
@@ -637,8 +664,64 @@ function HorseRacingTable() {
           <Typography color="error">{error}</Typography>
         </Box>
       )}
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
-        <Button startIcon={<ArrowLeft />} onClick={() => navigate('/')} variant="outlined">
+      {/* 同日・競馬場切替 + レース選択（ページ最上段・折り返し表示、スクロールなし） */}
+      {(venuesOnDate.length > 0 || siblingRaces.length > 0) && (
+        <Box sx={{ mb: 1 }}>
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1, alignItems: 'center' }}>
+            {venuesOnDate.length > 0 && (
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <Select
+                  value={selectedVenue || ''}
+                  onChange={(e) => {
+                    const v = String(e.target.value || '');
+                    setSelectedVenue(v);
+                    const list = (allRacesSameDate || []).filter(r => r.venue === v).sort((a, b) => a.raceNo - b.raceNo);
+                    setSiblingRaces(list);
+                    // 同じR番号へ自動遷移（存在しない場合は先頭）
+                    const currentNo = (() => {
+                      const id = raceInfo?.raceId || (raceId as string) || '';
+                      const tail = id.slice(-2);
+                      const n = parseInt(tail, 10);
+                      return isNaN(n) ? undefined : n;
+                    })();
+                    const target = (currentNo !== undefined)
+                      ? list.find(r => r.raceNo === currentNo) || list[0]
+                      : list[0];
+                    if (target && target.raceId && target.raceId !== raceInfo.raceId) {
+                      navigate(`/races/${target.raceId}`);
+                    }
+                  }}
+                  displayEmpty
+                >
+                  {venuesOnDate.map(v => (
+                    <MenuItem key={v} value={v}>{v}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+            {siblingRaces.map(sr => {
+              const selected = sr.raceId === (raceInfo.raceId || '');
+              const label = `${sr.raceNo}R${sr.offAt ? ` ${sr.offAt}` : ''}`;
+              return (
+                <Button
+                  key={sr.raceId}
+                  size="small"
+                  variant={selected ? 'contained' : 'outlined'}
+                  color={selected ? 'primary' : 'inherit'}
+                  onClick={() => navigate(`/races/${sr.raceId}`)}
+                  sx={{ whiteSpace: 'nowrap', minWidth: 72, flexShrink: 0 }}
+                  aria-label={`${sr.venue} ${sr.raceNo}レース${sr.offAt ? ` 発走 ${sr.offAt}` : ''}へ移動`}
+                >
+                  {label}
+                </Button>
+              );
+            })}
+          </Stack>
+        </Box>
+      )}
+      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2, flexWrap: 'wrap', rowGap: 1 }}>
+        <Button startIcon={<ArrowLeft />} onClick={() => navigate('/')} variant="outlined"
+          sx={{ whiteSpace: 'nowrap', minWidth: { xs: 108, sm: 140 }, flexShrink: 0 }}>
           トップに戻る
         </Button>
         <Button 
@@ -646,6 +729,7 @@ function HorseRacingTable() {
           onClick={() => { setRankMode('prev'); setRankPanelOpen(true); }} 
           variant="contained"
           color="primary"
+          sx={{ whiteSpace: 'nowrap', minWidth: { xs: 120, sm: 150 }, flexShrink: 0 }}
         >
           前走ランキング
         </Button>
@@ -654,10 +738,11 @@ function HorseRacingTable() {
           onClick={() => setAnalysisSidebarOpen(true)} 
           variant="contained"
           color="secondary"
+          sx={{ whiteSpace: 'nowrap', minWidth: { xs: 108, sm: 130 }, flexShrink: 0 }}
         >
           レース分析
         </Button>
-        <Box sx={{ flex: 1 }}>
+        <Box sx={{ flex: 1, minWidth: { xs: '100%', md: 0 } }}>
           <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
             {raceInfo.raceName}
           </Typography>

@@ -69,6 +69,20 @@ export default function RaceCsvUpload() {
       const headers = lines[0].split(',').map(h => h.trim());
       
       const errors: string[] = [];
+
+      const normalizeOffAt = (input?: string): string | undefined => {
+        if (!input) return undefined;
+        const s = String(input).trim();
+        const m = s.match(/^(\d{1,2}):(\d{2})$/);
+        if (m) {
+          const hh = String(parseInt(m[1], 10)).padStart(2, '0');
+          const mm = m[2];
+          return `${hh}:${mm}`;
+        }
+        const digits = s.replace(/[^0-9]/g, '');
+        if (digits.length === 4) return `${digits.slice(0,2)}:${digits.slice(2)}`;
+        return undefined;
+      };
       const expectedHeaders = ['date', 'venue', 'meetingNumber', 'dayNumber', 'raceNo', 'raceName', 'className', 'surface', 'distance', 'direction', 'trackCond'];
       
       if (!expectedHeaders.every(header => headers.includes(header))) {
@@ -104,6 +118,17 @@ export default function RaceCsvUpload() {
             const year = new Date(date).getFullYear();
             const raceId = generateRaceId(year, venue, meetingNumber, dayNumber, raceNo);
             
+            // 発走時刻（日本語ヘッダーも許可）
+            const offAtRaw = (() => {
+              if (headers.includes('offAt')) return values[headers.indexOf('offAt')];
+              const jpKeys = ['発走時刻', '発走', '発走時間'];
+              for (const key of jpKeys) {
+                const idx = headers.indexOf(key);
+                if (idx >= 0) return values[idx];
+              }
+              return '';
+            })();
+
             const raceData: RaceData = {
               raceId,
               date,
@@ -120,7 +145,7 @@ export default function RaceCsvUpload() {
               trackCond: values[headers.indexOf('trackCond')] as '良' | '稍' | '重' | '不良',
               cushionValue: headers.includes('cushionValue') ? parseFloat(values[headers.indexOf('cushionValue')]) : undefined,
               fieldSize: headers.includes('fieldSize') ? parseInt(values[headers.indexOf('fieldSize')]) : undefined,
-              offAt: headers.includes('offAt') ? values[headers.indexOf('offAt')] : undefined,
+              offAt: normalizeOffAt(offAtRaw),
               grade: headers.includes('grade') ? values[headers.indexOf('grade')] as 'OP' | 'G3' | 'G2' | 'G1' : undefined,
               weather: headers.includes('weather') ? values[headers.indexOf('weather')] : undefined,
             };
