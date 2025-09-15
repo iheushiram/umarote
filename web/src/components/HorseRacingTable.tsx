@@ -29,6 +29,7 @@ import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
 import HorseListSidebar from './HorseListSidebar';
 import AnalysisSidebar from './AnalysisSidebar';
 import PrevRankSidebar from './PrevRankSidebar';
+import { useRaceUiStore } from '../store/raceUiStore';
 
 function HorseRacingTable() {
   const { raceId } = useParams<{ raceId: string }>();
@@ -634,6 +635,17 @@ function HorseRacingTable() {
     return items.map((it, idx) => ({ ...it, rank: idx + 1 }));
   }, [entries, prizeMoneyCache]);
 
+  // 右サイド用ストアに反映（PC常時表示用）
+  useEffect(() => {
+    const setPrev = useRaceUiStore.getState().setItemsPrev;
+    const setPrev2 = useRaceUiStore.getState().setItemsPrev2;
+    setPrev(prevRankList);
+    setPrev2(prev2RankList);
+    return () => {
+      // クリアは不要だが、別レース遷移時のチラつきを抑えるために維持
+    };
+  }, [prevRankList, prev2RankList]);
+
   // モックのクッション値別成績（horseId -> range -> [1,2,3,other]）
   const cushionStats: Record<string, Record<CushionRange, [number, number, number, number]>> = {} as any;
 
@@ -729,7 +741,7 @@ function HorseRacingTable() {
           onClick={() => { setRankMode('prev'); setRankPanelOpen(true); }} 
           variant="contained"
           color="primary"
-          sx={{ whiteSpace: 'nowrap', minWidth: { xs: 120, sm: 150 }, flexShrink: 0 }}
+          sx={{ whiteSpace: 'nowrap', minWidth: { xs: 120, sm: 150 }, flexShrink: 0, display: { xs: 'inline-flex', lg: 'none' } }}
         >
           前走ランキング
         </Button>
@@ -777,6 +789,8 @@ function HorseRacingTable() {
           )}
         </Box>
       </Stack>
+
+      {/* 右サイド（3カラムレイアウトに移行のため削除） */}
 
       {/* クッション値レンジ選択（チップボタン） */}
       <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
