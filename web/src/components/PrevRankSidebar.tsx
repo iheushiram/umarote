@@ -15,9 +15,11 @@ interface PrevRankSidebarProps {
   mode?: 'prev' | 'prev2';
   // 親からモード変更を受け取る（任意）
   onModeChange?: (mode: 'prev' | 'prev2') => void;
+  // Drawerの種類（スマホ=temporary, PC=peristent）
+  variant?: 'temporary' | 'persistent';
 }
 
-export default function PrevRankSidebar({ open, onClose, itemsPrev, itemsPrev2, mode = 'prev', onModeChange }: PrevRankSidebarProps) {
+export default function PrevRankSidebar({ open, onClose, itemsPrev, itemsPrev2, mode = 'prev', onModeChange, variant = 'temporary' }: PrevRankSidebarProps) {
   const [localMode, setLocalMode] = useState<'prev' | 'prev2'>(mode);
 
   useEffect(() => {
@@ -39,7 +41,8 @@ export default function PrevRankSidebar({ open, onClose, itemsPrev, itemsPrev2, 
       anchor="right"
       open={open}
       onClose={onClose}
-      sx={{ '& .MuiDrawer-paper': { width: { xs: '100%', sm: 380 }, maxWidth: '90vw' } }}
+      variant={variant}
+      sx={{ '& .MuiDrawer-paper': { width: { xs: '100%', sm: 380 }, maxWidth: '90vw', zIndex: 1300 } }}
     >
       <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>

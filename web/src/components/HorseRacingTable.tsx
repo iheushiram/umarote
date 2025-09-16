@@ -19,6 +19,8 @@ import {
   Select,
   MenuItem,
 } from "@mui/material";
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import './horse-info.css';
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, BarChart3, List } from "lucide-react";
@@ -29,9 +31,15 @@ import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
 import HorseListSidebar from './HorseListSidebar';
 import AnalysisSidebar from './AnalysisSidebar';
 import PrevRankSidebar from './PrevRankSidebar';
+import RaceLevelSidebar from './RaceLevelSidebar';
 import { useRaceUiStore } from '../store/raceUiStore';
+import { useRaceLevelStore } from '../store/raceLevelStore';
 
 function HorseRacingTable() {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isUltraWide = useMediaQuery('(min-width:1900px)');
+  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   const { raceId } = useParams<{ raceId: string }>();
   const navigate = useNavigate();
   type CushionRange = 'none' | 'lte_7_9' | '8_0_8_9' | '9_0_9_9' | 'gte_10_0';
@@ -45,6 +53,7 @@ function HorseRacingTable() {
   const [selectedRange, setSelectedRange] = useState<CushionRange>('9_0_9_9');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rankPanelOpen, setRankPanelOpen] = useState(false);
+  const [raceLevelOpen, setRaceLevelOpen] = useState(false);
   const [rankMode, setRankMode] = useState<'prev' | 'prev2'>('prev');
   const [analysisSidebarOpen, setAnalysisSidebarOpen] = useState(false);
   // 同日・同会場のレース一覧
@@ -75,11 +84,14 @@ function HorseRacingTable() {
         const e = entries[0];
         setShowStickyStats(!e.isIntersecting);
       },
-      { root: null, threshold: 0 }
+      { root: null, threshold: 0, rootMargin: '0px 0px -1px 0px' }
     );
     obs.observe(el);
     return () => obs.disconnect();
   }, []);
+
+  // 固定バーの表示条件: ヘッダーが隠れた時のみ表示
+  const shouldShowSticky = showStickyStats;
 
   
   const [activeTab, setActiveTab] = useState<'entries' | 'results'>('entries');
@@ -124,6 +136,16 @@ function HorseRacingTable() {
   });
 
   const [entries, setEntries] = useState<HorseEntry[]>([]);
+  // 前走同走馬の次走平均着順（レースレベル）: horseId -> { avg|null, used, total }
+  const [prevRaceCohortAvgMap, setPrevRaceCohortAvgMap] = useState<Map<string, { avg: number | null; used: number; total: number }>>(new Map());
+  // 前走レベルの前処理キャッシュ（prevRaceId単位）
+  type PrevRaceLevelStats = {
+    prevRaceId: string;
+    prevDate?: string; // YYYYMMDD
+    coRunners: Map<string, { nextFinish: number | null; nextRaceId?: string }>; // 同走馬ごとの最初の次走の着順
+    totalCoRunners: number; // 対象馬を含む同走馬総数
+  };
+  const prevRaceLevelStatsCache = useRef<Map<string, PrevRaceLevelStats>>(new Map());
   // 前走レースID -> 頭数
   const [fieldSizeCache, setFieldSizeCache] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState<boolean>(true);
@@ -431,6 +453,146 @@ function HorseRacingTable() {
         const sortedEntries = mapped.sort((a, b) => a.horseNo - b.horseNo);
         setEntries(sortedEntries);
 
+        // --- レースレベル（前走同走馬の次走平均着順）算出 ---
+        try {
+          const normalize = (s?: string) => (s || '').replace(/[^0-9]/g, '').slice(0, 8);
+          const calcDate = beforeDate ? normalize(beforeDate) : undefined;
+          // horseId -> 前走の {raceId, date}
+          const prev1ByHorse = new Map<string, { raceId: string; date?: string }>();
+          es.forEach(e => {
+            const r0 = (resultsMap.get(e.horseId) || [])[0];
+            if (r0) prev1ByHorse.set(e.horseId, { raceId: r0.raceId, date: normalize(r0.date) });
+          });
+
+          // 直近1走（「前走」）のユニークなレースID
+          const prev1RaceIds = Array.from(new Set(Array.from(prev1ByHorse.values()).map(v => v.raceId)));
+
+          const admin2 = new AdminService();
+
+          const ensureStats = async (rid: string): Promise<void> => {
+            if (prevRaceLevelStatsCache.current.has(rid)) return;
+            // 1) 前走レースの出走馬（結果優先、なければ出馬表）と日付を取得
+            let participants: string[] = [];
+            let prevDate: string | undefined;
+            try {
+              const results = await admin2.getRaceResults(rid);
+              if (Array.isArray(results) && results.length > 0) {
+                participants = Array.from(new Set(results.map(r => r.horseId)));
+                prevDate = normalize(results[0]?.date);
+              }
+            } catch {}
+            if (participants.length === 0) {
+              try {
+                const ents = await admin2.getRaceEntries(rid);
+                participants = Array.from(new Set(ents.map(e => e.horseId)));
+                prevDate = prevDate || normalize(ents[0]?.date);
+              } catch {}
+            }
+            if (!prevDate) {
+              try {
+                const rinfo = await admin2.getRace(rid);
+                prevDate = normalize(rinfo?.date);
+              } catch {}
+            }
+
+            // 2) 各同走馬の「最初の次走」（prevDateより後、かつcalcDateより前）を取得
+            const coRunners = new Map<string, { nextFinish: number | null; nextRaceId?: string }>();
+            const list = participants.slice();
+            const chunkSize = 6;
+            for (let i = 0; i < list.length; i += chunkSize) {
+              const chunk = list.slice(i, i + chunkSize);
+              // eslint-disable-next-line no-await-in-loop
+              await Promise.all(chunk.map(async (hid) => {
+                try {
+                  const rs = await admin2.getRaceResults(undefined, hid, undefined, calcDate);
+                  if (!Array.isArray(rs) || rs.length === 0) {
+                    coRunners.set(hid, { nextFinish: null });
+                    return;
+                  }
+                  // prevDateより後のレースを抽出→日付昇順の最初が"最初の次走"
+                  const nd = normalize(prevDate);
+                  const after = rs
+                    .map(r => ({ ...r, _d: normalize(r.date) }))
+                    .filter(r => r._d && nd && r._d > nd)
+                    .sort((a, b) => (a._d! < b._d! ? -1 : a._d! > b._d! ? 1 : 0));
+                  const next = after[0];
+                  if (!next) {
+                    coRunners.set(hid, { nextFinish: null });
+                    return;
+                  }
+                  const pos = typeof next.finishPosition === 'number' && isFinite(next.finishPosition) && next.finishPosition > 0
+                    ? next.finishPosition
+                    : null; // DNF/DQ等は除外
+                  coRunners.set(hid, { nextFinish: pos, nextRaceId: next.raceId });
+                } catch {
+                  coRunners.set(hid, { nextFinish: null });
+                }
+              }));
+            }
+
+            prevRaceLevelStatsCache.current.set(rid, {
+              prevRaceId: rid,
+              prevDate,
+              coRunners,
+              totalCoRunners: participants.length,
+            });
+          };
+
+          // 前走レースごとに前処理
+          const chunkSize2 = 3; // レース単位で並列
+          for (let i = 0; i < prev1RaceIds.length; i += chunkSize2) {
+            const chunk = prev1RaceIds.slice(i, i + chunkSize2);
+            // eslint-disable-next-line no-await-in-loop
+            await Promise.all(chunk.map(rid => ensureStats(rid)));
+          }
+
+          // 馬ごとの平均値を算出
+          const perHorse = new Map<string, { avg: number | null; used: number; total: number }>();
+          es.forEach(e => {
+            const p = prev1ByHorse.get(e.horseId);
+            if (!p) return;
+            const stats = prevRaceLevelStatsCache.current.get(p.raceId);
+            if (!stats) return;
+            const total = Math.max(0, stats.totalCoRunners - 1); // 自馬を除く
+            let sum = 0; let used = 0;
+            for (const [hid, st] of stats.coRunners.entries()) {
+              if (hid === e.horseId) continue; // 自馬を除外
+              if (typeof st.nextFinish === 'number' && isFinite(st.nextFinish) && st.nextFinish > 0) {
+                sum += st.nextFinish;
+                used += 1;
+              }
+            }
+            const avg = used > 0 ? Math.round((sum / used) * 10) / 10 : null;
+            perHorse.set(e.horseId, { avg, used, total });
+          });
+
+          setPrevRaceCohortAvgMap(perHorse);
+
+          // ランキング項目生成（平均着順が小さいほど上位）。平均未算出(null)は末尾へ。
+          const items = sortedEntries.map(h => {
+            const m = perHorse.get(h.horseId) || { avg: null, used: 0, total: 0 };
+            const prevId = (h.races?.[0]?.raceId) || '';
+            return { horseId: h.horseId, horseNo: h.horseNo, name: h.name, avgPlace: m.avg, used: m.used, total: m.total, prevRaceId: prevId };
+          });
+          const ranked = items
+            .slice()
+            .sort((a, b) => {
+              const av = a.avgPlace === null ? Number.POSITIVE_INFINITY : a.avgPlace;
+              const bv = b.avgPlace === null ? Number.POSITIVE_INFINITY : b.avgPlace;
+              if (av !== bv) return av - bv; // 小さい方が上
+              if (a.used !== b.used) return b.used - a.used; // サンプル数で優先
+              return a.horseNo - b.horseNo;
+            })
+            .map((it, idx) => ({ rank: idx + 1, ...it }));
+
+          // 左カラム / サイドバーへ供給
+          useRaceLevelStore.getState().setItems(ranked);
+        } catch (e) {
+          console.warn('レースレベル（同走馬の次走平均着順）算出に失敗:', e);
+          setPrevRaceCohortAvgMap(new Map());
+          useRaceLevelStore.getState().setItems([]);
+        }
+
         // 前走平均時速（出走馬の直近1走の時速の平均）
         try {
           let sum = 0;
@@ -660,15 +822,21 @@ function HorseRacingTable() {
   return (
     <Box 
       sx={{ 
-        pb: 4, maxWidth: '1680px', mx: 'auto', px: 3,
+        pb: 4, maxWidth: '100%', mx: 'auto', px: 3,
+        position: 'relative', zIndex: 0,
+        // PCでサイドメニュー(persistent)が出ている間はその幅だけ余白を取り、
+        // 中央カラムと重ならないようにする
+        ml: (!isMobile && raceLevelOpen && !isUltraWide) ? { xs: 0, md: '380px' } : 0,
+        mr: (!isMobile && rankPanelOpen && !isUltraWide) ? { xs: 0, md: '380px' } : 0,
+        transition: 'margin 200ms ease',
         '--rankw': { xs: '28px', sm: '32px' },
-        '--framew': { xs: '44px', sm: '60px' },
-        '--horsenow': { xs: '44px', sm: '60px' },
-        // 馬名は少し狭める
-        '--namew': { xs: '120px', sm: '200px', md: '220px' },
-        // 前走セルを広げる
-        '--rcw': { xs: '150px', sm: '160px', md: '170px' },
-        '--cellw': { xs: '160px', sm: '170px', md: '180px' }
+        '--framew': { xs: '44px', sm: '52px', md: '56px', lg: '56px', xl: '60px' },
+        '--horsenow': { xs: '44px', sm: '52px', md: '56px', lg: '56px', xl: '60px' },
+        // 馬名は少し狭める（lgで圧縮、xlでゆるめ）
+        '--namew': { xs: '120px', sm: '160px', md: '180px', lg: '180px', xl: '220px' },
+        // 走ごとのセル幅（lgで圧縮、xlで拡張）
+        '--rcw': { xs: '140px', sm: '150px', md: '160px', lg: '160px', xl: '180px' },
+        '--cellw': { xs: '140px', sm: '150px', md: '160px', lg: '160px', xl: '180px' }
       }}
     >
       {error && (
@@ -792,19 +960,33 @@ function HorseRacingTable() {
 
       {/* 右サイド（3カラムレイアウトに移行のため削除） */}
 
-      {/* クッション値レンジ選択（チップボタン） */}
-      <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-        {(Object.keys(rangeLabels) as CushionRange[]).map((key) => (
-          <Chip
-            key={key}
-            label={rangeLabels[key]}
-            clickable
-            color={selectedRange === key ? 'primary' : 'default'}
-            variant={selectedRange === key ? 'filled' : 'outlined'}
-            onClick={() => setSelectedRange(key)}
-            size="small"
-          />
-        ))}
+      {/* クッション値レンジ選択（チップボタン） + ランキングボタン（<1900pxで表示） */}
+      <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 1 }}>
+        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+          {(Object.keys(rangeLabels) as CushionRange[]).map((key) => (
+            <Chip
+              key={key}
+              label={rangeLabels[key]}
+              clickable
+              color={selectedRange === key ? 'primary' : 'default'}
+              variant={selectedRange === key ? 'filled' : 'outlined'}
+              onClick={() => setSelectedRange(key)}
+              size="small"
+            />
+          ))}
+        </Stack>
+        {!isUltraWide && (
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button size="small" variant="outlined" onClick={() => setRaceLevelOpen(true)}>
+              レベルランキング
+            </Button>
+            {isDesktop && (
+              <Button size="small" variant="outlined" startIcon={<BarChart3 size={16} />} onClick={() => setRankPanelOpen(true)}>
+                前走ランキング
+              </Button>
+            )}
+          </Box>
+        )}
       </Stack>
 
       {/* 周り方選択（チップボタン） */}
@@ -822,25 +1004,43 @@ function HorseRacingTable() {
         ))}
       </Stack>
 
-      {/* 前走/前前走 レベルランキング（横から出す） */}
-      <PrevRankSidebar 
-        open={rankPanelOpen} 
-        onClose={() => setRankPanelOpen(false)} 
-        itemsPrev={prevRankList}
-        itemsPrev2={prev2RankList}
-        mode={rankMode}
-        onModeChange={setRankMode}
-      />
+      {/* 前走/前前走 レベルランキング（サイドメニュー） */}
+      {!isUltraWide && (
+        <PrevRankSidebar 
+          open={rankPanelOpen} 
+          onClose={() => setRankPanelOpen(false)} 
+          itemsPrev={prevRankList}
+          itemsPrev2={prev2RankList}
+          mode={rankMode}
+          onModeChange={setRankMode}
+          variant={isMobile ? 'temporary' : 'persistent'}
+        />
+      )}
 
-      {/* スクロール監視用センチネル */}
-      <Box ref={headerSentinelRef} sx={{ height: 1 }} />
+      {/* レースレベル ランキング（左サイドメニュー） */}
+      {!isUltraWide && (
+        <RaceLevelSidebar 
+          open={raceLevelOpen}
+          onClose={() => setRaceLevelOpen(false)}
+          variant={isMobile ? 'temporary' : 'persistent'}
+        />
+      )}
+
+      {/* スクロール監視用センチネル（ヘッダ直下に設置） */}
+      <Box ref={headerSentinelRef} sx={{ height: 2, width: '100%' }} />
 
       {/* 固定ステータスバー（平均タイム/平均時速/前走平均時速） */}
-      {showStickyStats && (
+      {shouldShowSticky && (
         <Box sx={{
-          position: 'sticky', top: 0, zIndex: 1200,
-          bgcolor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider',
-          py: 0.5, px: { xs: 1, sm: 2 }
+          position: 'fixed',
+          top: 0,
+          // 中央カラムの収縮に追従（PCでサイドメニュー表示時のみ左右を詰める）
+          left: (!isMobile && raceLevelOpen && !isUltraWide) ? { xs: 0, md: 380 } : 0,
+          right: (!isMobile && rankPanelOpen && !isUltraWide) ? { xs: 0, md: 380 } : 0,
+          zIndex: 1200,
+          bgcolor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider', boxShadow: 2,
+          py: 0.75, px: { xs: 1, sm: 2 },
+          transition: 'left 200ms ease, right 200ms ease'
         }}>
           <Typography variant="body2" color="text.secondary">
             {(() => {
@@ -861,9 +1061,11 @@ function HorseRacingTable() {
                   return `前走レベル上位:` + top.map(fmt).join(' /');
                 })()}
               </Typography>
-              <Button size="small" variant="outlined" onClick={() => setRankPanelOpen(true)}>
-                前走ランキング
-              </Button>
+              {!isUltraWide && (
+                <Button size="small" variant="outlined" onClick={() => setRankPanelOpen(true)}>
+                  前走ランキング
+                </Button>
+              )}
             </Box>
           )}
           {prevAvgSpeed !== null && (
@@ -895,21 +1097,21 @@ function HorseRacingTable() {
         <Table size="small" stickyHeader aria-label="race entries table" sx={{ minWidth: 850, '& td, & th': { px: { xs: 0.25, sm: 0.5 } }, '& .MuiTableCell-stickyHeader': { top: `${stickyOffset}px !important` } }}>
           <TableHead>
             <TableRow>
-              <TableCell align="center" sx={{ position: 'sticky', left: 0, zIndex: 3, bgcolor: 'background.paper', minWidth: 'var(--framew)', width: 'var(--framew)' }}>枠</TableCell>
-              <TableCell align="center" sx={{ position: 'sticky', left: 'var(--framew)', zIndex: 3, bgcolor: 'background.paper', minWidth: 'var(--horsenow)', width: 'var(--horsenow)' }}>馬番</TableCell>
-              <TableCell sx={{ position: { xs: 'static', sm: 'sticky' }, left: { sm: 'calc(var(--framew) + var(--horsenow))' }, zIndex: 3, bgcolor: 'background.paper', minWidth: 'var(--namew)', width: 'var(--namew)' }}>馬名</TableCell>
+              <TableCell align="center" sx={{ position: 'sticky', left: 0, zIndex: 0, bgcolor: 'background.paper', minWidth: 'var(--framew)', width: 'var(--framew)' }}>枠</TableCell>
+              <TableCell align="center" sx={{ position: 'sticky', left: 'var(--framew)', zIndex: 0, bgcolor: 'background.paper', minWidth: 'var(--horsenow)', width: 'var(--horsenow)' }}>馬番</TableCell>
+              <TableCell sx={{ position: { xs: 'static', sm: 'sticky' }, left: { sm: 'calc(var(--framew) + var(--horsenow))' }, zIndex: 0, bgcolor: 'background.paper', minWidth: 'var(--namew)', width: 'var(--namew)' }}>馬名</TableCell>
               <TableCell align="center">騎手</TableCell>
               <TableCell align="center" sx={{ width: 'var(--cellw)', minWidth: 'var(--cellw)', maxWidth: 'var(--cellw)', px: { xs: 0.25, sm: 0.5 } }}>前走</TableCell>
               <TableCell align="center" sx={{ width: 'var(--cellw)', minWidth: 'var(--cellw)', maxWidth: 'var(--cellw)', px: { xs: 0.25, sm: 0.5 } }}>2走</TableCell>
               <TableCell align="center" sx={{ width: 'var(--cellw)', minWidth: 'var(--cellw)', maxWidth: 'var(--cellw)', px: { xs: 0.25, sm: 0.5 }, display: { xs: 'none', sm: 'table-cell' } }}>3走</TableCell>
               <TableCell align="center" sx={{ width: 'var(--cellw)', minWidth: 'var(--cellw)', maxWidth: 'var(--cellw)', px: { xs: 0.25, sm: 0.5 }, display: { xs: 'none', sm: 'none', md: 'table-cell' } }}>4走</TableCell>
-              <TableCell align="center" sx={{ width: 'var(--cellw)', minWidth: 'var(--cellw)', maxWidth: 'var(--cellw)', px: { xs: 0.25, sm: 0.5 }, display: { xs: 'none', sm: 'none', md: 'table-cell' } }}>5走</TableCell>
+              <TableCell align="center" sx={{ width: 'var(--cellw)', minWidth: 'var(--cellw)', maxWidth: 'var(--cellw)', px: { xs: 0.25, sm: 0.5 }, display: 'none', '@media (min-width:1900px)': { display: 'table-cell' } }}>5走</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {(loading ? [] : entries).map((h) => (
               <TableRow key={h.horseId}>
-                <TableCell align="center" sx={{ position: 'sticky', left: 0, zIndex: 2, bgcolor: 'background.paper', minWidth: 'var(--framew)', width: 'var(--framew)' }}>
+                <TableCell align="center" sx={{ position: 'sticky', left: 0, zIndex: 0, bgcolor: 'background.paper', minWidth: 'var(--framew)', width: 'var(--framew)' }}>
                   <Chip 
                     label={h.frameNo} 
                     size="small" 
@@ -929,8 +1131,8 @@ function HorseRacingTable() {
                     }}
                   />
                 </TableCell>
-                <TableCell align="center" sx={{ position: 'sticky', left: 'var(--framew)', zIndex: 2, bgcolor: 'background.paper', minWidth: 'var(--horsenow)', width: 'var(--horsenow)' }}>{h.horseNo}</TableCell>
-                <TableCell sx={{ position: { xs: 'static', sm: 'sticky' }, left: { sm: 'calc(var(--framew) + var(--horsenow))' }, zIndex: 2, bgcolor: 'background.paper', minWidth: 'var(--namew)', width: 'var(--namew)' }}>
+                <TableCell align="center" sx={{ position: 'sticky', left: 'var(--framew)', zIndex: 0, bgcolor: 'background.paper', minWidth: 'var(--horsenow)', width: 'var(--horsenow)' }}>{h.horseNo}</TableCell>
+                <TableCell sx={{ position: { xs: 'static', sm: 'sticky' }, left: { sm: 'calc(var(--framew) + var(--horsenow))' }, zIndex: 0, bgcolor: 'background.paper', minWidth: 'var(--namew)', width: 'var(--namew)' }}>
                   <div className="horse-info">
                     <div className="horse-info__blood">
                       <div className="horse-info__sire">{h.blood.sire}</div>
@@ -1034,7 +1236,12 @@ function HorseRacingTable() {
                       key={idx} 
                       align="left" 
                       sx={{ 
-                        display: { xs: idx < 2 ? 'table-cell' : 'none', sm: idx < 3 ? 'table-cell' : 'none', md: 'table-cell' },
+                        display: { 
+                          xs: idx < 2 ? 'table-cell' : 'none',
+                          sm: idx < 3 ? 'table-cell' : 'none',
+                          md: idx < 4 ? 'table-cell' : 'none'
+                        },
+                        ...(idx === 4 ? { '@media (min-width:1900px)': { display: 'table-cell' } } : {}),
                         whiteSpace: 'normal', 
                         p: { xs: 0.25, sm: 0.5 }, 
                         width: 'var(--cellw)', minWidth: 'var(--cellw)', maxWidth: 'var(--cellw)',
@@ -1176,6 +1383,28 @@ function HorseRacingTable() {
                             );
                           })()}
                         </Box>
+
+                        {/* 前走同走馬の次走平均着順（このセルは前走のみ表示） */}
+                        {idx === 0 && (
+                          <Box>
+                            {(() => {
+                              const data = prevRaceCohortAvgMap.get(h.horseId);
+                              if (!data) {
+                                return (
+                                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                    同走次走平均: 算出中...
+                                  </Typography>
+                                );
+                              }
+                              const { avg, used, total } = data;
+                              return (
+                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                  同走次走平均: {avg !== null ? `${avg}位` : '-'}（{used}/{total}）
+                                </Typography>
+                              );
+                            })()}
+                          </Box>
+                        )}
 
                         {/* 出走情報・通過・上り・着差 */}
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
