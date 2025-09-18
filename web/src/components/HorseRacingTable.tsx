@@ -22,6 +22,7 @@ import {
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import './horse-info.css';
+import '../styles/focus-highlight.css';
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, BarChart3, List } from "lucide-react";
 import { HorseEntry } from '../types/horse';
@@ -34,6 +35,7 @@ import PrevRankSidebar from './PrevRankSidebar';
 import RaceLevelSidebar from './RaceLevelSidebar';
 import { useRaceUiStore } from '../store/raceUiStore';
 import { useRaceLevelStore } from '../store/raceLevelStore';
+import { useHorseFocusStore } from '../store/horseFocusStore';
 
 function HorseRacingTable() {
   const theme = useTheme();
@@ -171,6 +173,7 @@ function HorseRacingTable() {
   };
   const [raceSpeedCache, setRaceSpeedCache] = useState<Map<string, RaceSpeedInfo>>(new Map());
   const [loadingRaceSpeed, setLoadingRaceSpeed] = useState<Set<string>>(new Set());
+  const focusedHorseId = useHorseFocusStore(state => state.focusedHorseId);
 
   // 蛍光ペン風ハイライト色を賞金合計で切替
   const highlightColorFor = (total: number) => {
@@ -1073,8 +1076,12 @@ function HorseRacingTable() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {(loading ? [] : entries).map((h) => (
-              <TableRow key={h.horseId}>
+            {(loading ? [] : entries).map((h) => {
+              const isFocused = focusedHorseId === h.horseId;
+              const rowClassName = isFocused ? 'focus-active-row' : undefined;
+
+              return (
+                <TableRow key={h.horseId} className={rowClassName}>
                 <TableCell align="center" sx={{ position: 'sticky', left: 0, zIndex: 0, bgcolor: 'background.paper', minWidth: 'var(--framew)', width: 'var(--framew)' }}>
                   <Chip 
                     label={h.frameNo} 
@@ -1421,7 +1428,8 @@ function HorseRacingTable() {
                   </TableCell>
                 ))}
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>

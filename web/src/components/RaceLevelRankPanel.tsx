@@ -1,10 +1,66 @@
 import React, { useState } from 'react'
-import { Box, Typography, Stack, Chip, ToggleButtonGroup, ToggleButton, Tooltip, Switch, FormControlLabel } from '@mui/material'
+import { Box, Typography, Stack, Chip, ToggleButtonGroup, ToggleButton, Tooltip, Switch, FormControlLabel, ButtonBase } from '@mui/material'
 import { useRaceLevelStore } from '../store/raceLevelStore'
+import type { RaceLevelRankItem } from '../store/raceLevelStore'
+import { useHorseFocusStore } from '../store/horseFocusStore'
+import '../styles/focus-highlight.css'
+
+function RaceLevelRankRow({
+  item,
+  displayMode,
+  onFocus,
+  isFocused,
+}: {
+  item: RaceLevelRankItem
+  displayMode: 'detail' | 'names'
+  onFocus: (horseId: string) => void
+  isFocused: boolean
+}) {
+  return (
+    <ButtonBase
+      disableRipple
+      onClick={() => onFocus(item.horseId)}
+      className={isFocused ? 'rank-item-button rank-item-button--active' : 'rank-item-button'}
+      sx={{
+        width: '100%',
+        borderRadius: 1,
+        px: 1,
+        py: 0.5,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        textAlign: 'left',
+        justifyContent: 'flex-start',
+        transition: 'background-color 120ms ease',
+        '&:hover': { backgroundColor: 'action.hover' },
+      }}
+    >
+      <Box sx={{ minWidth: 28, height: 22, display: 'inline-grid', placeItems: 'center', borderRadius: 0.5, bgcolor: item.rank === 1 ? '#fde68a' : item.rank === 2 ? '#e5e7eb' : item.rank === 3 ? '#fcd34d' : '#f3f4f6', border: '1px solid #e5e7eb', fontWeight: 800 }}>
+        {item.rank}
+      </Box>
+      <Chip label={item.horseNo} size="small" sx={{ fontWeight: 700 }} />
+      {displayMode === 'detail' ? (
+        <>
+          <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {item.avgPlace !== null ? `平均 ${item.avgPlace}位` : '平均 -'}
+            {`（${item.used}/${item.total}）`}
+          </Typography>
+        </>
+      ) : (
+        <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
+          {item.name}
+        </Typography>
+      )}
+    </ButtonBase>
+  )
+}
 
 export default function RaceLevelRankPanel() {
   const items = useRaceLevelStore(s => s.items)
   const [displayMode, setDisplayMode] = useState<'detail' | 'names'>('detail')
+  const focus = useHorseFocusStore(state => state.focus)
+  const focusedHorseId = useHorseFocusStore(state => state.focusedHorseId)
 
   const title = 'レースレベルランキング'
   const caption = '指標: 前走同走馬の「最初の次走」平均着順（小数1桁）。DNF/DQ等は除外。'
@@ -34,23 +90,13 @@ export default function RaceLevelRankPanel() {
       ) : (
         <Stack spacing={0.5}>
           {items.map((item) => (
-            <Box key={item.horseId} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box sx={{ minWidth: 28, height: 22, display: 'inline-grid', placeItems: 'center', borderRadius: 0.5, bgcolor: item.rank === 1 ? '#fde68a' : item.rank === 2 ? '#e5e7eb' : item.rank === 3 ? '#fcd34d' : '#f3f4f6', border: '1px solid #e5e7eb', fontWeight: 800 }}>{item.rank}</Box>
-              <Chip label={item.horseNo} size="small" sx={{ fontWeight: 700 }} />
-              {displayMode === 'detail' ? (
-                <>
-                  <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {item.avgPlace !== null ? `平均 ${item.avgPlace}位` : '平均 -'}
-                    {`（${item.used}/${item.total}）`}
-                  </Typography>
-                </>
-              ) : (
-                <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
-                  {item.name}
-                </Typography>
-              )}
-            </Box>
+            <RaceLevelRankRow
+              key={item.horseId}
+              item={item}
+              displayMode={displayMode}
+              onFocus={focus}
+              isFocused={focusedHorseId === item.horseId}
+            />
           ))}
         </Stack>
       )}

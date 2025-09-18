@@ -1,0 +1,37 @@
+:root {
+  --focus-highlight-bg: rgba(59, 130, 246, 0.16);
+  --focus-highlight-outline: rgba(59, 130, 246, 0.55);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --focus-highlight-bg: rgba(96, 165, 250, 0.22);
+    --focus-highlight-outline: rgba(147, 197, 253, 0.6);
+  }
+}
+
+.rank-item-button {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.rank-item-button:hover {
+  border-color: rgba(148, 163, 184, 0.6);
+}
+
+.rank-item-button.rank-item-button--active {
+  border-color: var(--focus-highlight-outline);
+  background-color: var(--focus-highlight-bg);
+}
+
+.rank-item-button:focus-visible {
+  outline: 2px solid var(--focus-highlight-outline);
+  outline-offset: 2px;
+}
+
+.MuiTableRow-root.focus-active-row .MuiTableCell-root {
+  background-color: var(--focus-highlight-bg);
+  transition: background-color 160ms ease;
+}
