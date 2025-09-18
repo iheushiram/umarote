@@ -6,6 +6,42 @@ import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
 import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry } from './db/schema';
 import { eq, sql, and, inArray, desc, lt, lte, gte } from 'drizzle-orm';
 
+type EntryForDedup = {
+  id: number;
+  horseId: string | null;
+  horseNo: number | null;
+};
+
+export function resolveDuplicateRaceEntryIds(entries: EntryForDedup[]): number[] {
+  const seen = new Map<string, EntryForDedup>();
+  const duplicates: number[] = [];
+
+  for (const entry of entries) {
+    if (!entry.horseId) continue;
+
+    const currentNo = entry.horseNo ?? 0;
+    const existing = seen.get(entry.horseId);
+
+    if (!existing) {
+      seen.set(entry.horseId, entry);
+      continue;
+    }
+
+    const existingNo = existing.horseNo ?? 0;
+
+    if (existingNo === 0 && currentNo !== 0) {
+      duplicates.push(existing.id);
+      seen.set(entry.horseId, entry);
+    } else if (currentNo === 0 && existingNo !== 0) {
+      duplicates.push(entry.id);
+    } else {
+      duplicates.push(entry.id);
+    }
+  }
+
+  return duplicates;
+}
+
 type Bindings = {
   DB: D1Database;
 };
@@ -289,6 +325,36 @@ app.post('/api/race-results', async (c) => {
     const db = createDb(c.env.DB);
     const { results } = await c.req.json();
     const resultsData: NewRaceResult[] = results;
+
+    const targetRaceIds = Array.from(
+      new Set(
+        resultsData
+          .map((r) => r.raceId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      )
+    );
+
+    if (targetRaceIds.length > 0) {
+      await db.delete(raceResults)
+        .where(inArray(raceResults.raceId, targetRaceIds));
+      await db.delete(raceEntries)
+        .where(and(
+          inArray(raceEntries.raceId, targetRaceIds as any),
+          eq(raceEntries.horseNo, 0)
+        ));
+
+      for (const raceId of targetRaceIds) {
+        const entries = await db.select({ id: raceEntries.id, horseId: raceEntries.horseId, horseNo: raceEntries.horseNo })
+          .from(raceEntries)
+          .where(eq(raceEntries.raceId, raceId));
+
+        const duplicateIds = resolveDuplicateRaceEntryIds(entries as EntryForDedup[]);
+        if (duplicateIds.length > 0) {
+          await db.delete(raceEntries)
+            .where(inArray(raceEntries.id, duplicateIds));
+        }
+      }
+    }
     
     // UPSERT: 既存データがあれば更新、なければ挿入
     for (const resultData of resultsData) {
@@ -443,6 +509,36 @@ app.post('/api/race-results-with-horses', async (c) => {
     const db = createDb(c.env.DB);
     const { results } = await c.req.json();
     const resultsData: NewRaceResult[] = results;
+
+    const targetRaceIds = Array.from(
+      new Set(
+        resultsData
+          .map((r) => r.raceId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      )
+    );
+
+    if (targetRaceIds.length > 0) {
+      await db.delete(raceResults)
+        .where(inArray(raceResults.raceId, targetRaceIds));
+      await db.delete(raceEntries)
+        .where(and(
+          inArray(raceEntries.raceId, targetRaceIds as any),
+          eq(raceEntries.horseNo, 0)
+        ));
+
+      for (const raceId of targetRaceIds) {
+        const entries = await db.select({ id: raceEntries.id, horseId: raceEntries.horseId, horseNo: raceEntries.horseNo })
+          .from(raceEntries)
+          .where(eq(raceEntries.raceId, raceId));
+
+        const duplicateIds = resolveDuplicateRaceEntryIds(entries as EntryForDedup[]);
+        if (duplicateIds.length > 0) {
+          await db.delete(raceEntries)
+            .where(inArray(raceEntries.id, duplicateIds));
+        }
+      }
+    }
     
     // 1. レース情報を抽出して登録（既に登録済みの場合はスキップ）
     const raceMap = new Map<string, NewRace>();
@@ -561,56 +657,14 @@ app.post('/api/race-results-with-horses', async (c) => {
     });
     }
     
-    // 3. 出馬表データをUPSERT（存在しない場合は新規作成）
+    // 3. 出馬表データを既存レコードに対してのみ更新
     for (const resultData of resultsData) {
-      // レース結果から出馬表データを構築
-      const entryData: NewRaceEntry = {
-        raceId: resultData.raceId,
-        horseId: resultData.horseId,
-        date: resultData.date,
-        frameNo: 0, // デフォルト値（レース結果からは取得できない）
-        horseNo: 0, // デフォルト値（レース結果からは取得できない）
-        age: 0, // デフォルト値（レース結果からは取得できない）
-        jockey: resultData.jockey,
-        weight: resultData.weight,
-        trainer: (resultData as any).horseTrainer || '',
-        affiliation: '',
-        popularity: resultData.popularity,
-        bodyWeight: null,
-        bodyWeightDiff: null,
-        blinkers: false,
-        maternalGrandfather: (resultData as any).horseMaternalGrandfather || null,
-        // レース基本情報
-        raceName: resultData.raceName,
-        surface: resultData.courseType,
-        distance: resultData.distance,
-        // 馬の基本情報
-        horseName: (resultData as any).horseName || '',
-        sex: (resultData as any).horseSex || '牡',
-        color: '',
-        father: (resultData as any).horseFather || '',
-        mother: (resultData as any).horseMother || '',
-        owner: (resultData as any).horseOwner || '',
-        breeder: (resultData as any).horseBreeder || '',
-        // レース結果情報
-        previousPopularity: null,
-        previousFinishPosition: null,
-        previousOdds: null,
-        previousFinishOrder: null,
-        // その他の情報
-        dayNumber: null,
-        interval: null,
-        prizeMoney: (resultData as any).prizeMoney || null,
-        earnedMoney: (resultData as any).earnedMoney || null
-      };
-
-      // (race_id, horse_id) の複合キーで手動UPSERT（UNIQUE制約がないため）
       const existing = await db
         .select({ id: raceEntries.id })
         .from(raceEntries)
         .where(and(
-          eq(raceEntries.raceId, entryData.raceId),
-          eq(raceEntries.horseId, entryData.horseId)
+          eq(raceEntries.raceId, resultData.raceId),
+          eq(raceEntries.horseId, resultData.horseId)
         ))
         .get();
 
@@ -625,12 +679,6 @@ app.post('/api/race-results-with-horses', async (c) => {
             updatedAt: sql`CURRENT_TIMESTAMP`
           })
           .where(eq(raceEntries.id, existing.id));
-      } else {
-        await db.insert(raceEntries)
-          .values({
-            ...entryData,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          });
       }
     }
 
