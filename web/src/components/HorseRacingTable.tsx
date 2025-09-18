@@ -26,7 +26,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, BarChart3, List } from "lucide-react";
 import { HorseEntry } from '../types/horse';
 import { parseRaceId, formatRaceIdDisplay } from '../utils/raceUtils';
-import { AdminService, RaceResultData, RaceData } from '../services/adminService';
+import { AdminService, RaceResultData, RaceData, RaceBasicInfo, CoRunnerNextResponse } from '../services/adminService';
 import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
 import HorseListSidebar from './HorseListSidebar';
 import AnalysisSidebar from './AnalysisSidebar';
@@ -148,6 +148,7 @@ function HorseRacingTable() {
   const prevRaceLevelStatsCache = useRef<Map<string, PrevRaceLevelStats>>(new Map());
   // 前走レースID -> 頭数
   const [fieldSizeCache, setFieldSizeCache] = useState<Map<string, number>>(new Map());
+  const [raceBasicsCache, setRaceBasicsCache] = useState<Map<string, RaceBasicInfo>>(new Map());
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   // レースレベル（賞金合計/平均）キャッシュ
@@ -181,7 +182,7 @@ function HorseRacingTable() {
   };
 
   // 単一レースのレースレベル（賞金）情報を取得してキャッシュへ反映
-  const fetchRaceLevelInfo = async (targetRaceId: string) => {
+  const fetchRaceLevelInfo = async (targetRaceId: string, basics?: RaceBasicInfo) => {
     // 既にキャッシュ済み（有効値あり）なら何もしない
     if (prizeMoneyCache.has(targetRaceId)) {
       const cached = prizeMoneyCache.get(targetRaceId);
@@ -192,62 +193,80 @@ function HorseRacingTable() {
 
     setLoadingPrizeMoney(prev => new Set(prev).add(targetRaceId));
     try {
+      const cachedBasics = basics ?? raceBasicsCache.get(targetRaceId);
+      if (cachedBasics && (cachedBasics.totalPrizeMoney !== null && cachedBasics.totalPrizeMoney !== undefined || cachedBasics.totalEarnedMoney !== null && cachedBasics.totalEarnedMoney !== undefined)) {
+        const horseCount = cachedBasics.fieldSize ?? cachedBasics.entryCount ?? cachedBasics.resultCount ?? 0;
+        const info: RaceLevelInfo = {
+          prizeMoney: cachedBasics.totalPrizeMoney ?? undefined,
+          earnedMoney: cachedBasics.totalEarnedMoney ?? undefined,
+          horseCount,
+          avgPrize: horseCount > 0 && cachedBasics.totalPrizeMoney !== null && cachedBasics.totalPrizeMoney !== undefined
+            ? Math.round((cachedBasics.totalPrizeMoney / horseCount) * 10) / 10
+            : undefined,
+          avgEarned: horseCount > 0 && cachedBasics.totalEarnedMoney !== null && cachedBasics.totalEarnedMoney !== undefined
+            ? Math.round((cachedBasics.totalEarnedMoney / horseCount) * 10) / 10
+            : undefined,
+        };
+        setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, info));
+        return;
+      }
+
       const admin = new AdminService();
       const entries = await admin.getRaceEntries(targetRaceId);
-      if (entries.length > 0) {
-        const horseCount = entries.length;
-        const e0: any = entries[0] || {};
-        const apiTotalPrize: number | undefined = e0?.prizeMoney ?? undefined;
-        const apiTotalEarned: number | undefined = e0?.earnedMoney ?? undefined;
-
-        if ((apiTotalPrize !== undefined && apiTotalPrize !== null) || (apiTotalEarned !== undefined && apiTotalEarned !== null)) {
-          const info: RaceLevelInfo = {
-            prizeMoney: typeof apiTotalPrize === 'number' ? apiTotalPrize : undefined,
-            earnedMoney: typeof apiTotalEarned === 'number' ? apiTotalEarned : undefined,
-            horseCount,
-            avgPrize: typeof apiTotalPrize === 'number' && horseCount > 0 ? Math.round((apiTotalPrize / horseCount) * 10) / 10 : undefined,
-            avgEarned: typeof apiTotalEarned === 'number' && horseCount > 0 ? Math.round((apiTotalEarned / horseCount) * 10) / 10 : undefined,
-          };
-          setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, info));
-        } else {
-          // フォールバック: 各参加馬の前走までの累計を算出
-          const raceDate: string | undefined = entries[0]?.date;
-          if (raceDate) {
-            const allResults = await Promise.all(entries.map(async (en: any) => {
-              try {
-                const rs = await new AdminService().getRaceResults(undefined, en.horseId, undefined, raceDate);
-                return rs as any[];
-              } catch {
-                return [] as any[];
-              }
-            }));
-
-            let totalPrize = 0;
-            let totalEarned = 0;
-            for (const rs of allResults) {
-              for (const r of rs) {
-                if (typeof (r as any).prizeMoney === 'number') totalPrize += (r as any).prizeMoney;
-                if (typeof (r as any).earnedMoney === 'number') totalEarned += (r as any).earnedMoney;
-              }
-            }
-
-            const info: RaceLevelInfo = {
-              prizeMoney: isFinite(totalPrize) ? totalPrize : undefined,
-              earnedMoney: isFinite(totalEarned) ? totalEarned : undefined,
-              horseCount,
-              avgPrize: horseCount > 0 && isFinite(totalPrize) ? Math.round((totalPrize / horseCount) * 10) / 10 : undefined,
-              avgEarned: horseCount > 0 && isFinite(totalEarned) ? Math.round((totalEarned / horseCount) * 10) / 10 : undefined,
-            };
-            setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, info));
-          } else {
-            // 日付無し → 空キャッシュ（再試行抑制）
-            setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, {}));
-          }
-        }
-      } else {
-        // エントリ無し → 空キャッシュ
+      if (entries.length === 0) {
         setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, {}));
+        return;
       }
+
+      const horseCount = entries.length;
+      const e0: any = entries[0] || {};
+      const apiTotalPrize: number | undefined = e0?.prizeMoney ?? undefined;
+      const apiTotalEarned: number | undefined = e0?.earnedMoney ?? undefined;
+
+      if ((apiTotalPrize !== undefined && apiTotalPrize !== null) || (apiTotalEarned !== undefined && apiTotalEarned !== null)) {
+        const info: RaceLevelInfo = {
+          prizeMoney: typeof apiTotalPrize === 'number' ? apiTotalPrize : undefined,
+          earnedMoney: typeof apiTotalEarned === 'number' ? apiTotalEarned : undefined,
+          horseCount,
+          avgPrize: typeof apiTotalPrize === 'number' && horseCount > 0 ? Math.round((apiTotalPrize / horseCount) * 10) / 10 : undefined,
+          avgEarned: typeof apiTotalEarned === 'number' && horseCount > 0 ? Math.round((apiTotalEarned / horseCount) * 10) / 10 : undefined,
+        };
+        setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, info));
+        return;
+      }
+
+      const raceDate: string | undefined = entries[0]?.date;
+      if (!raceDate) {
+        setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, {}));
+        return;
+      }
+
+      const allResults = await Promise.all(entries.map(async (en: any) => {
+        try {
+          const rs = await new AdminService().getRaceResults(undefined, en.horseId, undefined, raceDate);
+          return rs as any[];
+        } catch {
+          return [] as any[];
+        }
+      }));
+
+      let totalPrize = 0;
+      let totalEarned = 0;
+      for (const rs of allResults) {
+        for (const r of rs) {
+          if (typeof (r as any).prizeMoney === 'number') totalPrize += (r as any).prizeMoney;
+          if (typeof (r as any).earnedMoney === 'number') totalEarned += (r as any).earnedMoney;
+        }
+      }
+
+      const info: RaceLevelInfo = {
+        prizeMoney: isFinite(totalPrize) ? totalPrize : undefined,
+        earnedMoney: isFinite(totalEarned) ? totalEarned : undefined,
+        horseCount,
+        avgPrize: horseCount > 0 && isFinite(totalPrize) ? Math.round((totalPrize / horseCount) * 10) / 10 : undefined,
+        avgEarned: horseCount > 0 && isFinite(totalEarned) ? Math.round((totalEarned / horseCount) * 10) / 10 : undefined,
+      };
+      setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, info));
     } catch (error) {
       console.error(`Error fetching prize money for race ${targetRaceId}:`, error);
     } finally {
@@ -260,54 +279,55 @@ function HorseRacingTable() {
   };
 
   // レースの前走平均時速／実測平均時速を算出しキャッシュ
-  const fetchRaceSpeedInfo = async (targetRaceId: string) => {
-    if (raceSpeedCache.has(targetRaceId)) {
-      const cached = raceSpeedCache.get(targetRaceId);
-      if ((cached?.prevAvg !== undefined) || (cached?.actualAvg !== undefined)) return;
-    }
-    if (loadingRaceSpeed.has(targetRaceId)) return;
-    setLoadingRaceSpeed(prev => new Set(prev).add(targetRaceId));
+  const fetchRaceSpeedMetricsBatch = async (raceIds: string[]) => {
+    const idsToFetch = raceIds.filter((rid) => {
+      if (!rid) return false;
+      if (loadingRaceSpeed.has(rid)) return false;
+      const cached = raceSpeedCache.get(rid);
+      if (!cached) return true;
+      const hasMetrics = (cached.actualAvg !== undefined && cached.actualAvg !== null)
+        || (cached.prevAvg !== undefined && cached.prevAvg !== null)
+        || (cached.winnerKmh !== undefined && cached.winnerKmh !== null);
+      return !hasMetrics;
+    });
+
+    if (idsToFetch.length === 0) return;
+
+    setLoadingRaceSpeed(prev => {
+      const ns = new Set(prev);
+      idsToFetch.forEach(id => ns.add(id));
+      return ns;
+    });
+
     try {
       const admin = new AdminService();
-      // 実測平均（当該レースの結果から）
-      let actualSum = 0; let actualCnt = 0;
-      let winnerKmh: number | undefined = undefined;
-      try {
-        const results = await admin.getRaceResults(targetRaceId);
-        for (const r of results || []) {
-          const v = calculateAverageSpeed(r.distance as any, (r as any).time as any);
-          if (isFinite(v) && v > 0) { actualSum += v; actualCnt += 1; }
-          if ((r as any).finishPosition === 1 && isFinite(v) && v > 0) {
-            winnerKmh = Math.round(v * 10) / 10;
+      const metrics = await admin.getRaceSpeedMetrics(idsToFetch, { limit: 1 });
+      const metricMap = new Map(metrics.map(m => [m.raceId, m] as const));
+
+      setRaceSpeedCache(prev => {
+        const next = new Map(prev);
+        idsToFetch.forEach(id => {
+          const row = metricMap.get(id);
+          if (row) {
+            next.set(id, {
+              actualAvg: row.actualAvg ?? undefined,
+              countActual: row.countActual || undefined,
+              prevAvg: row.prevAvg ?? undefined,
+              countPrev: row.countPrev || undefined,
+              winnerKmh: row.winnerKmh ?? undefined,
+            });
+          } else {
+            next.set(id, {} as RaceSpeedInfo);
           }
-        }
-      } catch {}
-      // 前走平均（当該レースの出馬表から、レース当日より前の直近1走）
-      let prevSum = 0; let prevCnt = 0;
-      try {
-        const entries = await admin.getRaceEntries(targetRaceId);
-        const raceDate = entries[0]?.date; // 期待フォーマット: YYYYMMDD
-        await Promise.all((entries || []).map(async (en: any) => {
-          try {
-            const rs = await admin.getRaceResults(undefined, en.horseId, 1, raceDate);
-            const last = (rs || [])[0];
-            if (last && last.distance && last.time) {
-              const v = calculateAverageSpeed(last.distance as any, (last as any).time as any);
-              if (isFinite(v) && v > 0) { prevSum += v; prevCnt += 1; }
-            }
-          } catch {}
-        }));
-      } catch {}
-      const info: RaceSpeedInfo = {
-        actualAvg: actualCnt > 0 ? Math.round((actualSum / actualCnt) * 10) / 10 : undefined,
-        countActual: actualCnt || undefined,
-        prevAvg: prevCnt > 0 ? Math.round((prevSum / prevCnt) * 10) / 10 : undefined,
-        countPrev: prevCnt || undefined,
-        winnerKmh: winnerKmh,
-      };
-      setRaceSpeedCache(prev => new Map(prev).set(targetRaceId, info));
+        });
+        return next;
+      });
     } finally {
-      setLoadingRaceSpeed(prev => { const ns = new Set(prev); ns.delete(targetRaceId); return ns; });
+      setLoadingRaceSpeed(prev => {
+        const ns = new Set(prev);
+        idsToFetch.forEach(id => ns.delete(id));
+        return ns;
+      });
     }
   };
 
@@ -352,14 +372,15 @@ function HorseRacingTable() {
           }
         }
 
-        const es = await admin.getRaceEntries(raceId as string);
-        // 各馬の直近レース(最大5件)も取得
-        const resultsMap = new Map<string, RaceResultData[]>();
         const beforeDate = (race && typeof race.date === 'string') ? race.date.replace(/-/g, '') : undefined;
-        await Promise.all(es.map(async (e) => {
-          const res = await admin.getRaceResults(undefined, e.horseId, 5, beforeDate);
-          resultsMap.set(e.horseId, res);
-        }));
+        const historyResponse = await admin.getRaceEntriesWithHistory(raceId as string, {
+          limit: 5,
+          beforeDate,
+        });
+        const es = historyResponse.entries;
+        const resultsMap = new Map<string, RaceResultData[]>(
+          es.map(e => [e.horseId, (e.recentResults || []).slice(0, 5)])
+        );
 
         // 前走のユニークなレースIDを収集
         const prevRaceIds = Array.from(
@@ -369,31 +390,21 @@ function HorseRacingTable() {
         );
 
         // 頭数を一括取得（races.fieldSize → race_results件数 → race_entries件数 の順でフォールバック）
-        const fsPairs = await Promise.all(prevRaceIds.map(async (rid) => {
-          // 1) races.fieldSize
-          try {
-            const info = await admin.getRace(rid);
-            if (info && typeof info.fieldSize === 'number' && info.fieldSize > 0) {
-              return [rid, info.fieldSize] as const;
-            }
-          } catch {}
-          // 2) race_results の件数
-          try {
-            const rs = await admin.getRaceResults(rid);
-            if (Array.isArray(rs) && rs.length > 0) {
-              return [rid, rs.length] as const;
-            }
-          } catch {}
-          // 3) race_entries の件数
-          try {
-            const ents = await admin.getRaceEntries(rid);
-            if (Array.isArray(ents) && ents.length > 0) {
-              return [rid, ents.length] as const;
-            }
-          } catch {}
-          return [rid, 0] as const;
-        }));
-        const fsMap = new Map<string, number>(fsPairs);
+        let basicsMap = new Map<string, RaceBasicInfo>();
+        if (prevRaceIds.length > 0) {
+          const basics = await admin.getRaceBasics(prevRaceIds);
+          basicsMap = new Map(basics.map(item => [item.raceId, item] as const));
+          setRaceBasicsCache(basicsMap);
+        } else {
+          setRaceBasicsCache(new Map());
+        }
+
+        const fsMap = new Map<string, number>();
+        prevRaceIds.forEach(rid => {
+          const info = basicsMap.get(rid);
+          const val = info?.fieldSize ?? info?.entryCount ?? info?.resultCount ?? fieldSizeCache.get(rid) ?? 0;
+          fsMap.set(rid, val || 0);
+        });
         setFieldSizeCache(fsMap);
 
         const mapped: HorseEntry[] = es.map((e) => {
@@ -467,84 +478,37 @@ function HorseRacingTable() {
           // 直近1走（「前走」）のユニークなレースID
           const prev1RaceIds = Array.from(new Set(Array.from(prev1ByHorse.values()).map(v => v.raceId)));
 
-          const admin2 = new AdminService();
+          const coRunnerStats: CoRunnerNextResponse[] = prev1RaceIds.length > 0
+            ? await admin.getCoRunnerNextResults(prev1RaceIds, { beforeDate: calcDate })
+            : [];
 
-          const ensureStats = async (rid: string): Promise<void> => {
-            if (prevRaceLevelStatsCache.current.has(rid)) return;
-            // 1) 前走レースの出走馬（結果優先、なければ出馬表）と日付を取得
-            let participants: string[] = [];
-            let prevDate: string | undefined;
-            try {
-              const results = await admin2.getRaceResults(rid);
-              if (Array.isArray(results) && results.length > 0) {
-                participants = Array.from(new Set(results.map(r => r.horseId)));
-                prevDate = normalize(results[0]?.date);
-              }
-            } catch {}
-            if (participants.length === 0) {
-              try {
-                const ents = await admin2.getRaceEntries(rid);
-                participants = Array.from(new Set(ents.map(e => e.horseId)));
-                prevDate = prevDate || normalize(ents[0]?.date);
-              } catch {}
-            }
-            if (!prevDate) {
-              try {
-                const rinfo = await admin2.getRace(rid);
-                prevDate = normalize(rinfo?.date);
-              } catch {}
-            }
-
-            // 2) 各同走馬の「最初の次走」（prevDateより後、かつcalcDateより前）を取得
-            const coRunners = new Map<string, { nextFinish: number | null; nextRaceId?: string }>();
-            const list = participants.slice();
-            const chunkSize = 6;
-            for (let i = 0; i < list.length; i += chunkSize) {
-              const chunk = list.slice(i, i + chunkSize);
-              // eslint-disable-next-line no-await-in-loop
-              await Promise.all(chunk.map(async (hid) => {
-                try {
-                  const rs = await admin2.getRaceResults(undefined, hid, undefined, calcDate);
-                  if (!Array.isArray(rs) || rs.length === 0) {
-                    coRunners.set(hid, { nextFinish: null });
-                    return;
-                  }
-                  // prevDateより後のレースを抽出→日付昇順の最初が"最初の次走"
-                  const nd = normalize(prevDate);
-                  const after = rs
-                    .map(r => ({ ...r, _d: normalize(r.date) }))
-                    .filter(r => r._d && nd && r._d > nd)
-                    .sort((a, b) => (a._d! < b._d! ? -1 : a._d! > b._d! ? 1 : 0));
-                  const next = after[0];
-                  if (!next) {
-                    coRunners.set(hid, { nextFinish: null });
-                    return;
-                  }
-                  const pos = typeof next.finishPosition === 'number' && isFinite(next.finishPosition) && next.finishPosition > 0
-                    ? next.finishPosition
-                    : null; // DNF/DQ等は除外
-                  coRunners.set(hid, { nextFinish: pos, nextRaceId: next.raceId });
-                } catch {
-                  coRunners.set(hid, { nextFinish: null });
-                }
-              }));
-            }
-
-            prevRaceLevelStatsCache.current.set(rid, {
-              prevRaceId: rid,
-              prevDate,
-              coRunners,
-              totalCoRunners: participants.length,
+          coRunnerStats.forEach(item => {
+            const map = new Map<string, { nextFinish: number | null; nextRaceId?: string }>();
+            item.runners.forEach(r => {
+              map.set(r.horseId, {
+                nextFinish: typeof r.nextFinish === 'number' && isFinite(r.nextFinish) && r.nextFinish > 0 ? r.nextFinish : null,
+                nextRaceId: r.nextRaceId ?? undefined,
+              });
             });
-          };
+            prevRaceLevelStatsCache.current.set(item.raceId, {
+              prevRaceId: item.raceId,
+              prevDate: item.prevDate ?? undefined,
+              coRunners: map,
+              totalCoRunners: item.totalCoRunners,
+            });
+          });
 
-          // 前走レースごとに前処理
-          const chunkSize2 = 3; // レース単位で並列
-          for (let i = 0; i < prev1RaceIds.length; i += chunkSize2) {
-            const chunk = prev1RaceIds.slice(i, i + chunkSize2);
-            // eslint-disable-next-line no-await-in-loop
-            await Promise.all(chunk.map(rid => ensureStats(rid)));
-          }
+          // APIから返らなかったレースは空データとしてキャッシュ
+          prev1RaceIds.forEach(rid => {
+            if (!prevRaceLevelStatsCache.current.has(rid)) {
+              prevRaceLevelStatsCache.current.set(rid, {
+                prevRaceId: rid,
+                prevDate: undefined,
+                coRunners: new Map(),
+                totalCoRunners: 0,
+              });
+            }
+          });
 
           // 馬ごとの平均値を算出
           const perHorse = new Map<string, { avg: number | null; used: number; total: number }>();
@@ -670,16 +634,16 @@ function HorseRacingTable() {
           const chunkSize = 6;
           for (let i = 0; i < prevRaceIds.length; i += chunkSize) {
             const chunk = prevRaceIds.slice(i, i + chunkSize);
-            await Promise.all(chunk.map(rid => fetchRaceLevelInfo(rid)));
+            await Promise.all(chunk.map(rid => fetchRaceLevelInfo(rid, basicsMap.get(rid))));
           }
         })();
 
         // 追加: 前走レースの前走平均時速・実測平均時速を一括取得
         (async () => {
-          const chunkSize = 6;
+          const chunkSize = 12;
           for (let i = 0; i < prevRaceIds.length; i += chunkSize) {
             const chunk = prevRaceIds.slice(i, i + chunkSize);
-            await Promise.all(chunk.map(rid => fetchRaceSpeedInfo(rid)));
+            await fetchRaceSpeedMetricsBatch(chunk);
           }
         })();
 

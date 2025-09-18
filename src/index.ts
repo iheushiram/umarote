@@ -4,7 +4,7 @@ import { createDb } from './db/db';
 import { horses, races, raceResults, raceEntries, trackConditions } from './db/schema';
 import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
 import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry } from './db/schema';
-import { eq, sql, and, inArray, desc, lt, lte, gte } from 'drizzle-orm';
+import { eq, sql, and, inArray, desc, lt, lte, gte, gt } from 'drizzle-orm';
 
 type EntryForDedup = {
   id: number;
@@ -1145,6 +1145,439 @@ app.get('/api/races/:raceId/entries', async (c) => {
   }
 });
 
+// 出馬表＋各馬の直近レース結果をまとめて取得
+app.get('/api/races/:raceId/entries-with-history', async (c) => {
+  try {
+    const db = createDb(c.env.DB);
+    const raceId = c.req.param('raceId');
+    const limitParam = c.req.query('limit') ?? c.req.query('recentLimit');
+    const beforeDateParam = c.req.query('beforeDate');
+    const limit = limitParam ? Math.max(1, Math.min(10, parseInt(limitParam, 10) || 5)) : 5;
+
+    const entries = await db.select().from(raceEntries).where(eq(raceEntries.raceId, raceId));
+    if (entries.length === 0) {
+      return c.json({ raceId, raceDate: null, entries: [] });
+    }
+
+    const horseIds = Array.from(new Set(entries.map(e => e.horseId).filter((id): id is string => Boolean(id))));
+    const horsesRows = horseIds.length > 0
+      ? await db.select().from(horses).where(inArray(horses.id, horseIds as any))
+      : [];
+    const horseMap = new Map(horsesRows.map(h => [h.id, h] as const));
+
+    let raceDate = entries[0]?.date || null;
+    if (!raceDate) {
+      const raceRow = await db.select({ date: races.date }).from(races).where(eq(races.raceId, raceId)).get();
+      raceDate = raceRow?.date || null;
+    }
+
+    const effectiveBeforeDate = typeof beforeDateParam === 'string' && beforeDateParam.trim().length > 0
+      ? beforeDateParam.trim()
+      : raceDate;
+
+    let recentResultsMap = new Map<string, any[]>();
+    if (horseIds.length > 0) {
+      const condition = effectiveBeforeDate
+        ? and(
+            inArray(raceResults.horseId, horseIds as any),
+            lt(raceResults.date, effectiveBeforeDate)
+          )
+        : inArray(raceResults.horseId, horseIds as any);
+
+      const maxRows = limit * horseIds.length;
+      const rows = await db.select().from(raceResults)
+        .where(condition)
+        .orderBy(raceResults.horseId, desc(raceResults.date), raceResults.popularity)
+        .limit(maxRows);
+
+      recentResultsMap = rows.reduce((map, row) => {
+        const key = row.horseId;
+        if (!key) return map;
+        const arr = map.get(key) ?? [];
+        if (arr.length < limit) {
+          arr.push(row);
+          map.set(key, arr);
+        }
+        return map;
+      }, new Map<string, any[]>());
+    }
+
+    const enriched = entries.map(entry => {
+      return {
+        ...entry,
+        horse: horseMap.get(entry.horseId) || null,
+        recentResults: recentResultsMap.get(entry.horseId) ?? []
+      };
+    });
+
+    return c.json({ raceId, raceDate, entries: enriched });
+  } catch (error) {
+    console.error('Error getting race entries with history:', error);
+    return c.json({ error: '出馬表＋直近結果の取得に失敗しました' }, 500);
+  }
+});
+
+// 複数レースの基本情報（頭数、賞金合計など）をまとめて取得
+app.post('/api/races/batch-basic', async (c) => {
+  try {
+    const db = createDb(c.env.DB);
+    const body = await c.req.json();
+    const raceIdsInput = Array.isArray(body?.raceIds) ? body.raceIds : [];
+    if (raceIdsInput.length === 0) {
+      return c.json({ races: [] });
+    }
+
+    const filteredIds = raceIdsInput.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+    const raceIds = Array.from(new Set<string>(filteredIds));
+    if (raceIds.length === 0) {
+      return c.json({ races: [] });
+    }
+
+    const raceRows = await db.select({
+      raceId: races.raceId,
+      date: races.date,
+      fieldSize: races.fieldSize,
+    }).from(races).where(inArray(races.raceId, raceIds as any));
+
+    const entryCounts = await db.select({
+      raceId: raceEntries.raceId,
+      count: sql<number>`COUNT(*)`,
+    })
+      .from(raceEntries)
+      .where(inArray(raceEntries.raceId, raceIds as any))
+      .groupBy(raceEntries.raceId);
+
+    const resultAgg = await db.select({
+      raceId: raceResults.raceId,
+      count: sql<number>`COUNT(*)`,
+      prize: sql<number>`SUM(${raceResults.prizeMoney})`,
+      earned: sql<number>`SUM(${raceResults.earnedMoney})`,
+    })
+      .from(raceResults)
+      .where(inArray(raceResults.raceId, raceIds as any))
+      .groupBy(raceResults.raceId);
+
+    const entryMap = new Map(entryCounts.map(row => [row.raceId, Number(row.count) || 0] as const));
+    const resultMap = new Map(resultAgg.map(row => [row.raceId, {
+      count: Number(row.count) || 0,
+      prize: row.prize !== null && row.prize !== undefined ? Number(row.prize) : null,
+      earned: row.earned !== null && row.earned !== undefined ? Number(row.earned) : null,
+    }] as const));
+    const raceMap = new Map(raceRows.map(row => [row.raceId, row] as const));
+
+    const response = raceIds.map((raceId) => {
+      const raceRow = raceMap.get(raceId);
+      const entries = entryMap.get(raceId) ?? 0;
+      const resultRow = resultMap.get(raceId);
+      const resultsCount = resultRow?.count ?? 0;
+      return {
+        raceId,
+        date: raceRow?.date ?? null,
+        fieldSize: raceRow?.fieldSize ?? null,
+        entryCount: entries,
+        resultCount: resultsCount,
+        totalPrizeMoney: resultRow?.prize ?? null,
+        totalEarnedMoney: resultRow?.earned ?? null,
+      };
+    });
+
+    return c.json({ races: response });
+  } catch (error) {
+    console.error('Error getting race basics:', error);
+    return c.json({ error: 'レース基本情報の取得に失敗しました' }, 500);
+  }
+});
+
+// 複数レースの同走馬と次走結果をまとめて取得
+app.post('/api/races/co-runners/next', async (c) => {
+  try {
+    const db = createDb(c.env.DB);
+    const body = await c.req.json();
+    const raceIdsInput = Array.isArray(body?.raceIds) ? body.raceIds : [];
+    const beforeDateInput: string | undefined = typeof body?.beforeDate === 'string' ? body.beforeDate : undefined;
+
+    const filteredIds = raceIdsInput.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+    const raceIds = Array.from(new Set<string>(filteredIds));
+    if (raceIds.length === 0) {
+      return c.json({ races: [] });
+    }
+
+    const normalize = (value?: string | null): string | undefined => {
+      if (!value) return undefined;
+      const digits = value.replace(/[^0-9]/g, '');
+      if (digits.length === 6) return `20${digits}`;
+      if (digits.length >= 8) return digits.slice(0, 8);
+      return undefined;
+    };
+
+    const beforeDate = normalize(beforeDateInput);
+
+    const responses = [] as Array<{
+      raceId: string;
+      prevDate: string | null;
+      totalCoRunners: number;
+      runners: Array<{ horseId: string; nextRaceId: string | null; nextDate: string | null; nextFinish: number | null }>;
+    }>;
+
+    for (const raceId of raceIds) {
+      let prevDate: string | undefined;
+      let participants: string[] = [];
+
+      try {
+        const resultRows = await db.select({
+          horseId: raceResults.horseId,
+          date: raceResults.date,
+        }).from(raceResults)
+          .where(eq(raceResults.raceId, raceId));
+
+        if (resultRows.length > 0) {
+          participants = Array.from(new Set(resultRows.map(r => r.horseId).filter(Boolean) as string[]));
+          prevDate = normalize(resultRows[0]?.date);
+        }
+      } catch {}
+
+      if (participants.length === 0) {
+        try {
+          const entryRows = await db.select({
+            horseId: raceEntries.horseId,
+            date: raceEntries.date,
+          }).from(raceEntries)
+            .where(eq(raceEntries.raceId, raceId));
+          if (entryRows.length > 0) {
+            participants = Array.from(new Set(entryRows.map(e => e.horseId).filter(Boolean) as string[]));
+            prevDate = prevDate || normalize(entryRows[0]?.date);
+          }
+        } catch {}
+      }
+
+      if (!prevDate) {
+        try {
+          const raceRow = await db.select({ date: races.date }).from(races).where(eq(races.raceId, raceId)).get();
+          prevDate = normalize(raceRow?.date);
+        } catch {}
+      }
+
+      const totalCoRunners = participants.length;
+      if (participants.length === 0) {
+        responses.push({ raceId, prevDate: prevDate ?? null, totalCoRunners, runners: [] });
+        continue;
+      }
+
+      const conditions: any[] = [inArray(raceResults.horseId, participants as any)];
+      if (prevDate) conditions.push(gt(raceResults.date, prevDate));
+      if (beforeDate) conditions.push(lt(raceResults.date, beforeDate));
+
+      const nextRows = await db.select({
+        horseId: raceResults.horseId,
+        raceId: raceResults.raceId,
+        date: raceResults.date,
+        finishPosition: raceResults.finishPosition,
+      })
+        .from(raceResults)
+        .where(and(...conditions as any))
+        .orderBy(raceResults.horseId, raceResults.date)
+        .limit(participants.length * 20);
+
+      const bestMap = new Map<string, { raceId: string | null; date: string | null; finishPosition: number | null }>();
+      nextRows.forEach(row => {
+        if (!row.horseId) return;
+        if (!bestMap.has(row.horseId)) {
+          bestMap.set(row.horseId, {
+            raceId: row.raceId,
+            date: row.date ?? null,
+            finishPosition: typeof row.finishPosition === 'number' ? row.finishPosition : null,
+          });
+        }
+      });
+
+      const runners = participants.map(horseId => {
+        const best = bestMap.get(horseId);
+        return {
+          horseId,
+          nextRaceId: best?.raceId ?? null,
+          nextDate: best?.date ?? null,
+          nextFinish: best?.finishPosition ?? null,
+        };
+      });
+
+      responses.push({ raceId, prevDate: prevDate ?? null, totalCoRunners, runners });
+    }
+
+    return c.json({ races: responses });
+  } catch (error) {
+    console.error('Error getting co-runner next results:', error);
+    return c.json({ error: '同走馬の次走情報の取得に失敗しました' }, 500);
+  }
+});
+
+// 複数レースの速度関連指標をまとめて取得
+app.post('/api/races/speed-metrics', async (c) => {
+  try {
+    const db = createDb(c.env.DB);
+    const body = await c.req.json();
+    const raceIdsInput = Array.isArray(body?.raceIds) ? body.raceIds : [];
+    const beforeDateInput: string | undefined = typeof body?.beforeDate === 'string' ? body.beforeDate : undefined;
+    const limitInput = typeof body?.limit === 'number' ? body.limit : undefined;
+    const limit = limitInput && limitInput > 0 ? Math.min(limitInput, 10) : 1;
+
+    const filteredIds = raceIdsInput.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+    const raceIds = Array.from(new Set<string>(filteredIds));
+    if (raceIds.length === 0) {
+      return c.json({ races: [] });
+    }
+
+    const normalize = (value?: string | null): string | undefined => {
+      if (!value) return undefined;
+      const digits = value.replace(/[^0-9]/g, '');
+      if (digits.length === 6) return `20${digits}`;
+      if (digits.length >= 8) return digits.slice(0, 8);
+      return undefined;
+    };
+
+    const beforeDate = normalize(beforeDateInput);
+
+    const resultsRows = await db.select({
+      raceId: raceResults.raceId,
+      horseId: raceResults.horseId,
+      distance: raceResults.distance,
+      time: raceResults.time,
+      finishPosition: raceResults.finishPosition,
+    }).from(raceResults)
+      .where(inArray(raceResults.raceId, raceIds as any));
+
+    const entriesRows = await db.select({
+      raceId: raceEntries.raceId,
+      horseId: raceEntries.horseId,
+      date: raceEntries.date,
+      weight: raceEntries.weight,
+      frameNo: raceEntries.frameNo,
+      horseNo: raceEntries.horseNo,
+    }).from(raceEntries)
+      .where(inArray(raceEntries.raceId, raceIds as any));
+
+    const entryMap = entriesRows.reduce((map, row) => {
+      const list = map.get(row.raceId) ?? [];
+      list.push(row);
+      map.set(row.raceId, list);
+      return map;
+    }, new Map<string, typeof entriesRows>());
+
+    const resultMap = resultsRows.reduce((map, row) => {
+      const list = map.get(row.raceId) ?? [];
+      list.push(row);
+      map.set(row.raceId, list);
+      return map;
+    }, new Map<string, typeof resultsRows>());
+
+    const raceRows = await db.select({ raceId: races.raceId, date: races.date }).from(races)
+      .where(inArray(races.raceId, raceIds as any));
+    const raceDateMap = new Map<string, string | undefined>(raceRows.map(r => [r.raceId, r.date] as const));
+
+    const normalizeResults = (rows: typeof resultsRows[number][]) => {
+      return rows.map(row => {
+        const distance = row.distance ?? 0;
+        const timeVal = toSecondsFromRaceTime(row.time ?? '');
+        const speed = distance > 0 && timeVal > 0 ? Math.round((distance / timeVal) * 3.6 * 10) / 10 : null;
+        return { ...row, speed };
+      });
+    };
+
+    const responses = [] as Array<{
+      raceId: string;
+      winnerKmh: number | null;
+      actualAvg: number | null;
+      countActual: number;
+      prevAvg: number | null;
+      countPrev: number;
+    }>;
+
+    for (const raceId of raceIds) {
+      const results = normalizeResults(resultMap.get(raceId) ?? []);
+      const entries = entryMap.get(raceId) ?? [];
+
+      let winnerKmh: number | null = null;
+      let actualSum = 0;
+      let actualCnt = 0;
+      results.forEach(r => {
+        if (typeof r.speed === 'number' && isFinite(r.speed) && r.speed > 0) {
+          actualSum += r.speed;
+          actualCnt += 1;
+          if ((r.finishPosition ?? null) === 1) {
+            winnerKmh = r.speed;
+          }
+        }
+      });
+
+      const raceDateRaw = entries[0]?.date || raceDateMap.get(raceId) || null;
+      const raceDate = normalize(raceDateRaw);
+
+      const horseIds = entries.map(e => e.horseId).filter(Boolean) as string[];
+      let prevAvg: number | null = null;
+      let countPrev = 0;
+      if (horseIds.length > 0 && raceDate) {
+        const conditions = beforeDate
+          ? and(
+              inArray(raceResults.horseId, horseIds as any),
+              lt(raceResults.date, beforeDate),
+              lt(raceResults.date, raceDate)
+            )
+          : and(
+              inArray(raceResults.horseId, horseIds as any),
+              lt(raceResults.date, raceDate)
+            );
+
+        const prevRows = await db.select({
+          horseId: raceResults.horseId,
+          raceId: raceResults.raceId,
+          date: raceResults.date,
+          distance: raceResults.distance,
+          time: raceResults.time,
+        })
+          .from(raceResults)
+          .where(conditions as any)
+          .orderBy(desc(raceResults.date), raceResults.horseId)
+          .limit(horseIds.length * limit);
+
+        const bestByHorse = new Map<string, { distance: number | null; time: string | null }>();
+        prevRows.forEach(row => {
+          if (!row.horseId || bestByHorse.has(row.horseId)) return;
+          bestByHorse.set(row.horseId, { distance: row.distance, time: row.time });
+        });
+
+        let prevSum = 0;
+        bestByHorse.forEach(v => {
+          const dist = v.distance ?? 0;
+          const timeSec = toSecondsFromRaceTime(v.time ?? '');
+          const sp = dist > 0 && timeSec > 0 ? (dist / timeSec) * 3.6 : null;
+          if (sp && isFinite(sp) && sp > 0) {
+            prevSum += sp;
+            countPrev += 1;
+          }
+        });
+        if (countPrev > 0) {
+          prevAvg = Math.round((prevSum / countPrev) * 10) / 10;
+        }
+      }
+
+      const actualAvg = actualCnt > 0 ? Math.round((actualSum / actualCnt) * 10) / 10 : null;
+
+      responses.push({
+        raceId,
+        winnerKmh: winnerKmh,
+        actualAvg,
+        countActual: actualCnt,
+        prevAvg,
+        countPrev,
+      });
+    }
+
+    return c.json({ races: responses });
+  } catch (error) {
+    console.error('Error getting speed metrics:', error);
+    return c.json({ error: 'レース速度情報の取得に失敗しました' }, 500);
+  }
+});
+
 // テスト用：賞金情報を手動で更新
 app.patch('/api/races/:raceId/prize-money', async (c) => {
   try {
@@ -1756,3 +2189,4 @@ app.get('/api/stats', async (c) => {
 });
 
 export default app;
+import { count, sum } from 'drizzle-orm/sql';

@@ -97,6 +97,43 @@ export interface RaceEntryData {
   earnedMoney?: number; // 収得賞金（万円）
 }
 
+export interface RaceEntryWithHistory extends RaceEntryData {
+  recentResults: RaceResultData[];
+}
+
+export interface RaceBasicInfo {
+  raceId: string;
+  date?: string | null;
+  fieldSize?: number | null;
+  entryCount?: number;
+  resultCount?: number;
+  totalPrizeMoney?: number | null;
+  totalEarnedMoney?: number | null;
+}
+
+export interface CoRunnerNextRace {
+  horseId: string;
+  nextRaceId: string | null;
+  nextDate: string | null;
+  nextFinish: number | null;
+}
+
+export interface CoRunnerNextResponse {
+  raceId: string;
+  prevDate: string | null;
+  totalCoRunners: number;
+  runners: CoRunnerNextRace[];
+}
+
+export interface RaceSpeedMetrics {
+  raceId: string;
+  winnerKmh: number | null;
+  actualAvg: number | null;
+  countActual: number;
+  prevAvg: number | null;
+  countPrev: number;
+}
+
 // API呼び出しサービス
 export class AdminService {
   async insertHorses(horsesData: HorseData[]): Promise<void> {
@@ -423,6 +460,94 @@ export class AdminService {
       return await response.json();
     } catch (error) {
       console.error('Error getting race entries:', error);
+      return [];
+    }
+  }
+
+  async getRaceEntriesWithHistory(
+    raceId: string,
+    options?: { limit?: number; beforeDate?: string }
+  ): Promise<{ raceId: string; raceDate: string | null; entries: RaceEntryWithHistory[] }> {
+    try {
+      const params = new URLSearchParams();
+      if (options?.limit !== undefined) params.set('limit', String(options.limit));
+      if (options?.beforeDate) params.set('beforeDate', options.beforeDate);
+      const query = params.toString();
+      const url = `${API_BASE_URL}/api/races/${raceId}/entries-with-history${query ? `?${query}` : ''}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('出馬表＋直近成績の取得に失敗しました');
+      }
+      const data = await response.json();
+      return {
+        raceId: data.raceId,
+        raceDate: data.raceDate ?? null,
+        entries: Array.isArray(data.entries) ? data.entries : [],
+      };
+    } catch (error) {
+      console.error('Error getting race entries with history:', error);
+      return { raceId, raceDate: null, entries: [] };
+    }
+  }
+
+  async getRaceBasics(raceIds: string[]): Promise<RaceBasicInfo[]> {
+    try {
+      if (!Array.isArray(raceIds) || raceIds.length === 0) return [];
+      const response = await fetch(`${API_BASE_URL}/api/races/batch-basic`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raceIds }),
+      });
+      if (!response.ok) {
+        throw new Error('レース基本情報の取得に失敗しました');
+      }
+      const data = await response.json();
+      return Array.isArray(data.races) ? data.races : [];
+    } catch (error) {
+      console.error('Error getting race basics:', error);
+      return [];
+    }
+  }
+
+  async getCoRunnerNextResults(raceIds: string[], options?: { beforeDate?: string }): Promise<CoRunnerNextResponse[]> {
+    try {
+      if (!Array.isArray(raceIds) || raceIds.length === 0) return [];
+      const payload: any = { raceIds };
+      if (options?.beforeDate) payload.beforeDate = options.beforeDate;
+      const response = await fetch(`${API_BASE_URL}/api/races/co-runners/next`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error('同走馬次走情報の取得に失敗しました');
+      }
+      const data = await response.json();
+      return Array.isArray(data?.races) ? data.races : [];
+    } catch (error) {
+      console.error('Error getting co-runner next results:', error);
+      return [];
+    }
+  }
+
+  async getRaceSpeedMetrics(raceIds: string[], options?: { beforeDate?: string; limit?: number }): Promise<RaceSpeedMetrics[]> {
+    try {
+      if (!Array.isArray(raceIds) || raceIds.length === 0) return [];
+      const payload: any = { raceIds };
+      if (options?.beforeDate) payload.beforeDate = options.beforeDate;
+      if (options?.limit !== undefined) payload.limit = options.limit;
+      const response = await fetch(`${API_BASE_URL}/api/races/speed-metrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error('レース速度情報の取得に失敗しました');
+      }
+      const data = await response.json();
+      return Array.isArray(data?.races) ? data.races : [];
+    } catch (error) {
+      console.error('Error getting race speed metrics:', error);
       return [];
     }
   }
