@@ -33,6 +33,7 @@ import HorseListSidebar from './HorseListSidebar';
 import AnalysisSidebar from './AnalysisSidebar';
 import PrevRankSidebar from './PrevRankSidebar';
 import RaceLevelSidebar from './RaceLevelSidebar';
+import PrevRaceSpeedSummary, { PrevRaceSpeedSummaryItem } from './PrevRaceSpeedSummary';
 import { useRaceUiStore } from '../store/raceUiStore';
 import { useRaceLevelStore } from '../store/raceLevelStore';
 import { useHorseFocusStore } from '../store/horseFocusStore';
@@ -138,6 +139,35 @@ function HorseRacingTable() {
   });
 
   const [entries, setEntries] = useState<HorseEntry[]>([]);
+  const lastRaceSpeedItems = useMemo(() => {
+    if (!entries || entries.length === 0) {
+      return [] as PrevRaceSpeedSummaryItem[];
+    }
+
+    const items = entries.map((entry) => {
+      const lastRace = entry.races?.[0];
+      if (!lastRace || !lastRace.distance || !lastRace.time) return null;
+      const speed = calculateAverageSpeed(lastRace.distance, lastRace.time);
+      if (!speed || !isFinite(speed) || speed <= 0) return null;
+      return {
+        horseId: entry.horseId,
+        horseNo: entry.horseNo,
+        name: entry.name,
+        speed,
+        track: lastRace.track,
+        distance: lastRace.distance,
+        surface: lastRace.surface,
+        date: lastRace.date,
+        raceName: lastRace.class,
+      } satisfies PrevRaceSpeedSummaryItem;
+    }).filter((item): item is PrevRaceSpeedSummaryItem => item !== null);
+
+    if (items.length === 0) {
+      return [] as PrevRaceSpeedSummaryItem[];
+    }
+
+    return [...items].sort((a, b) => b.speed - a.speed);
+  }, [entries]);
   // 前走同走馬の次走平均着順（レースレベル）: horseId -> { avg|null, used, total }
   const [prevRaceCohortAvgMap, setPrevRaceCohortAvgMap] = useState<Map<string, { avg: number | null; used: number; total: number }>>(new Map());
   // 前走レベルの前処理キャッシュ（prevRaceId単位）
@@ -174,6 +204,7 @@ function HorseRacingTable() {
   const [raceSpeedCache, setRaceSpeedCache] = useState<Map<string, RaceSpeedInfo>>(new Map());
   const [loadingRaceSpeed, setLoadingRaceSpeed] = useState<Set<string>>(new Set());
   const focusedHorseId = useHorseFocusStore(state => state.focusedHorseId);
+  const focusHorse = useHorseFocusStore(state => state.focus);
 
   // 蛍光ペン風ハイライト色を賞金合計で切替
   const highlightColorFor = (total: number) => {
@@ -1043,8 +1074,18 @@ function HorseRacingTable() {
         </Box>
       )}
 
+      {!loading && lastRaceSpeedItems.length > 0 && (
+        <Box sx={{ mt: 1.5, mb: hasResults ? 1.5 : 1 }}>
+          <PrevRaceSpeedSummary
+            items={lastRaceSpeedItems}
+            focusedHorseId={focusedHorseId}
+            onSelect={focusHorse}
+          />
+        </Box>
+      )}
+
       {hasResults && (
-        <Box sx={{ mt: 2 }}>
+        <Box sx={{ mt: 1.5 }}>
           <Tabs
             value={activeTab}
             onChange={(_, v) => setActiveTab(v)}
@@ -1060,6 +1101,7 @@ function HorseRacingTable() {
       )}
 
       {(activeTab === 'entries' || !hasResults) && (
+      <>
       <TableContainer component={Paper} sx={{ maxWidth: '100%', overflowX: 'auto' }}>
         <Table size="small" stickyHeader aria-label="race entries table" sx={{ minWidth: 850, '& td, & th': { px: { xs: 0.25, sm: 0.5 } }, '& .MuiTableCell-stickyHeader': { top: `${stickyOffset}px !important` } }}>
           <TableHead>
@@ -1433,6 +1475,7 @@ function HorseRacingTable() {
           </TableBody>
         </Table>
       </TableContainer>
+      </>
       )}
 
       {hasResults && activeTab === 'results' && (

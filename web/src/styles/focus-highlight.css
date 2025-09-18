@@ -26,6 +26,10 @@
   background-color: var(--focus-highlight-bg);
 }
 
+.rank-item-button.rank-item-button--compact {
+  width: auto;
+}
+
 .rank-item-button:focus-visible {
   outline: 2px solid var(--focus-highlight-outline);
   outline-offset: 2px;

@@ -17,42 +17,54 @@ function RaceLevelRankRow({
   isFocused: boolean
 }) {
   return (
-    <ButtonBase
-      disableRipple
-      onClick={() => onFocus(item.horseId)}
-      className={isFocused ? 'rank-item-button rank-item-button--active' : 'rank-item-button'}
-      sx={{
-        width: '100%',
-        borderRadius: 1,
-        px: 1,
-        py: 0.5,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1,
-        textAlign: 'left',
-        justifyContent: 'flex-start',
-        transition: 'background-color 120ms ease',
-        '&:hover': { backgroundColor: 'action.hover' },
-      }}
-    >
-      <Box sx={{ minWidth: 28, height: 22, display: 'inline-grid', placeItems: 'center', borderRadius: 0.5, bgcolor: item.rank === 1 ? '#fde68a' : item.rank === 2 ? '#e5e7eb' : item.rank === 3 ? '#fcd34d' : '#f3f4f6', border: '1px solid #e5e7eb', fontWeight: 800 }}>
-        {item.rank}
-      </Box>
-      <Chip label={item.horseNo} size="small" sx={{ fontWeight: 700 }} />
-      {displayMode === 'detail' ? (
-        <>
-          <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</Typography>
-          <Typography variant="caption" color="text.secondary">
-            {item.avgPlace !== null ? `平均 ${item.avgPlace}位` : '平均 -'}
-            {`（${item.used}/${item.total}）`}
-          </Typography>
-        </>
-      ) : (
-        <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
+    <Tooltip
+      describeChild
+      disableInteractive
+      title={(
+        <Typography variant="caption" sx={{ fontWeight: 600 }}>
           {item.name}
         </Typography>
       )}
-    </ButtonBase>
+      placement="right"
+      componentsProps={{ tooltip: { sx: { maxWidth: 360 } } }}
+    >
+      <ButtonBase
+        disableRipple
+        onClick={() => onFocus(item.horseId)}
+        className={isFocused ? 'rank-item-button rank-item-button--active' : 'rank-item-button'}
+        sx={{
+          width: '100%',
+          borderRadius: 1,
+          px: 1,
+          py: 0.5,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          textAlign: 'left',
+          justifyContent: 'flex-start',
+          transition: 'background-color 120ms ease',
+          '&:hover': { backgroundColor: 'action.hover' },
+        }}
+      >
+        <Box sx={{ minWidth: 28, height: 22, display: 'inline-grid', placeItems: 'center', borderRadius: 0.5, bgcolor: item.rank === 1 ? '#fde68a' : item.rank === 2 ? '#e5e7eb' : item.rank === 3 ? '#fcd34d' : '#f3f4f6', border: '1px solid #e5e7eb', fontWeight: 800 }}>
+          {item.rank}
+        </Box>
+        <Chip label={item.horseNo} size="small" sx={{ fontWeight: 700 }} />
+        {displayMode === 'detail' ? (
+          <>
+            <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {item.avgPlace !== null ? `平均 ${item.avgPlace}位` : '平均 -'}
+              {`（${item.used}/${item.total}）`}
+            </Typography>
+          </>
+        ) : (
+          <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
+            {item.name}
+          </Typography>
+        )}
+      </ButtonBase>
+    </Tooltip>
   )
 }
 
