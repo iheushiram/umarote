@@ -134,6 +134,46 @@ export interface RaceSpeedMetrics {
   countPrev: number;
 }
 
+export interface TrainingRecordPayload {
+  trainingType: 'hill' | 'wood';
+  facility: string;
+  course?: string | null;
+  turn?: string | null;
+  trainingDate: string;
+  weekday: string;
+  trainingTime: string;
+  horseName: string;
+  classCode?: string | null;
+  sex: '牡' | '牝' | 'セ';
+  age: number;
+  trainer: string;
+  time10f?: number | null;
+  time9f?: number | null;
+  time8f?: number | null;
+  time7f?: number | null;
+  time6f?: number | null;
+  time5f?: number | null;
+  time4f?: number | null;
+  time3f?: number | null;
+  time2f?: number | null;
+  time1f?: number | null;
+  lap9?: number | null;
+  lap8?: number | null;
+  lap7?: number | null;
+  lap6?: number | null;
+  lap5?: number | null;
+  lap4?: number | null;
+  lap3?: number | null;
+  lap2?: number | null;
+  lap1?: number | null;
+  registrationNumber?: string | null;
+  affiliation?: string | null;
+}
+
+export interface TrainingRecordResponse extends TrainingRecordPayload {
+  id: number;
+}
+
 // API呼び出しサービス
 export class AdminService {
   async insertHorses(horsesData: HorseData[]): Promise<void> {
@@ -241,6 +281,23 @@ export class AdminService {
     } catch (error) {
       console.error('Error inserting race results with horses:', error);
       throw new Error('レース結果と馬データの挿入に失敗しました');
+    }
+  }
+
+  async insertTrainingRecords(records: TrainingRecordPayload[]): Promise<void> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/training-records`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ records })
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || '調教データの登録に失敗しました');
+      }
+    } catch (error) {
+      console.error('Error inserting training records:', error);
+      throw new Error('調教データの登録に失敗しました');
     }
   }
 
@@ -568,6 +625,35 @@ export class AdminService {
     } catch (error) {
       console.error('Error updating prize money:', error);
       throw new Error('賞金情報の更新に失敗しました');
+    }
+  }
+
+  async getTrainingRecordsByHorseNames(horseNames: string[], limit = 3, signal?: AbortSignal): Promise<Record<string, TrainingRecordResponse[]>> {
+    if (!horseNames || horseNames.length === 0) {
+      return {};
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/training-records/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ horseNames, limit }),
+        signal,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || '調教データの取得に失敗しました');
+      }
+
+      const data = await response.json();
+      return data.records || {};
+    } catch (error) {
+      if ((error as any)?.name === 'AbortError') {
+        return {};
+      }
+      console.error('Error fetching training records:', error);
+      throw new Error('調教データの取得に失敗しました');
     }
   }
 }

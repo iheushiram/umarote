@@ -101,6 +101,42 @@
   .horse-info__surface{ font-size: 11px; }
 }
 
+.horse-info__training{
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  margin-top:4px;
+}
+.horse-info__training-item{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  color:var(--hi-muted);
+  font-size:12px;
+  white-space:nowrap;
+}
+.horse-info__training-text{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  color:var(--hi-muted);
+}
+.horse-info__training-badge{
+  display:inline-flex;
+  align-items:center;
+  padding:2px 6px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:600;
+}
+.horse-info__training-badge--hill{
+  background:rgba(59,130,246,0.15);
+  color:#1d4ed8;
+}
+.horse-info__training-badge--wood{
+  background:rgba(16,185,129,0.18);
+  color:#047857;
+}
+
 .horse-info__weight{ white-space:nowrap; }
 .horse-info__weight .hi-weight-diff{ margin-left:2px; }
 .hi-up   { color:var(--hi-danger); }
@@ -125,4 +161,5 @@
   .horse-info__name{ font-weight:600; }
   .horse-info__stable{ font-size:12px; }
   .hi-chip{ font-size:10px; padding:1px 4px; }
+  .horse-info__training-item{ font-size:11px; }
 }

@@ -180,3 +180,45 @@ export type RaceEntry = typeof raceEntries.$inferSelect;
 export type NewRaceEntry = typeof raceEntries.$inferInsert;
 export type TrackConditionDetail = typeof trackConditionDetails.$inferSelect;
 export type NewTrackConditionDetail = typeof trackConditionDetails.$inferInsert;
+
+export const trainingRecords = sqliteTable('training_records', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  trainingType: text('training_type', { enum: ['hill', 'wood'] }).notNull(),
+  facility: text('facility').notNull(),
+  course: text('course'),
+  turn: text('turn'),
+  trainingDate: text('training_date').notNull(),
+  weekday: text('weekday').notNull(),
+  trainingTime: text('training_time').notNull(),
+  horseName: text('horse_name').notNull(),
+  classCode: text('class_code'),
+  sex: text('sex', { enum: ['牡', '牝', 'セ'] }).notNull(),
+  age: integer('age').notNull(),
+  trainer: text('trainer').notNull(),
+  time10f: real('time_10f'),
+  time9f: real('time_9f'),
+  time8f: real('time_8f'),
+  time7f: real('time_7f'),
+  time6f: real('time_6f'),
+  time5f: real('time_5f'),
+  time4f: real('time_4f'),
+  time3f: real('time_3f'),
+  time2f: real('time_2f'),
+  time1f: real('time_1f'),
+  lap9: real('lap_9'),
+  lap8: real('lap_8'),
+  lap7: real('lap_7'),
+  lap6: real('lap_6'),
+  lap5: real('lap_5'),
+  lap4: real('lap_4'),
+  lap3: real('lap_3'),
+  lap2: real('lap_2'),
+  lap1: real('lap_1'),
+  registrationNumber: text('registration_number'),
+  affiliation: text('affiliation'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+export type TrainingRecord = typeof trainingRecords.$inferSelect;
+export type NewTrainingRecord = typeof trainingRecords.$inferInsert;

@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createDb } from './db/db';
-import { horses, races, raceResults, raceEntries, trackConditions } from './db/schema';
+import { horses, races, raceResults, raceEntries, trackConditions, trainingRecords } from './db/schema';
 import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
-import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry } from './db/schema';
+import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry, NewTrainingRecord } from './db/schema';
 import { eq, sql, and, inArray, desc, lt, lte, gte, gt } from 'drizzle-orm';
 
 type EntryForDedup = {
@@ -1079,6 +1079,232 @@ app.post('/api/race-entries-csv', async (c) => {
   } catch (error) {
     console.error('Error processing race entries CSV:', error);
     return c.json({ error: '出馬表CSVデータの処理に失敗しました' }, 500);
+  }
+});
+
+app.post('/api/training-records', async (c) => {
+  try {
+    const body = await c.req.json();
+    const recordsInput = Array.isArray(body?.records) ? body.records : Array.isArray(body?.csvData) ? body.csvData : null;
+    if (!recordsInput || recordsInput.length === 0) {
+      return c.json({ error: '調教データが空です' }, 400);
+    }
+
+    const toNullableNumber = (value: unknown): number | null => {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'number' && !isNaN(value)) return value;
+      const normalized = String(value).trim();
+      if (!normalized) return null;
+      const replaced = normalized.replace(/[^0-9\.\-]/g, '');
+      if (!replaced) return null;
+      const num = parseFloat(replaced);
+      return Number.isFinite(num) ? num : null;
+    };
+
+    const ensureTimeString = (value: unknown): string => {
+      const raw = String(value ?? '').trim();
+      if (!raw) return '';
+      if (!raw.includes(':')) {
+        const n = parseInt(raw, 10);
+        if (!isNaN(n)) {
+          const h = Math.floor(n / 100);
+          const m = n % 100;
+          return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        }
+      }
+      const [h, m] = raw.split(':');
+      const hh = String(Number(h)).padStart(2, '0');
+      const mm = String(Number(m)).padStart(2, '0');
+      return `${hh}:${mm}`;
+    };
+
+    const sanitizeRecord = (record: any): Omit<NewTrainingRecord, 'id' | 'createdAt' | 'updatedAt'> => {
+      const sexValue = record?.sex === '牝' ? '牝' : record?.sex === 'セ' ? 'セ' : '牡';
+      const ageValue = typeof record?.age === 'number' && Number.isFinite(record.age)
+        ? record.age
+        : parseInt(String(record?.age ?? '0'), 10) || 0;
+
+      const base: Omit<NewTrainingRecord, 'id' | 'createdAt' | 'updatedAt'> = {
+        trainingType: record?.trainingType === 'wood' ? 'wood' : 'hill',
+        facility: String(record?.facility ?? ''),
+        course: record?.course ? String(record.course) : null,
+        turn: record?.turn ? String(record.turn) : null,
+        trainingDate: String(record?.trainingDate ?? ''),
+        weekday: String(record?.weekday ?? ''),
+        trainingTime: ensureTimeString(record?.trainingTime ?? ''),
+        horseName: String(record?.horseName ?? ''),
+        classCode: record?.classCode ? String(record.classCode) : null,
+        sex: sexValue,
+        age: ageValue,
+        trainer: String(record?.trainer ?? ''),
+        time10f: toNullableNumber(record?.time10f),
+        time9f: toNullableNumber(record?.time9f),
+        time8f: toNullableNumber(record?.time8f),
+        time7f: toNullableNumber(record?.time7f),
+        time6f: toNullableNumber(record?.time6f),
+        time5f: toNullableNumber(record?.time5f),
+        time4f: toNullableNumber(record?.time4f),
+        time3f: toNullableNumber(record?.time3f),
+        time2f: toNullableNumber(record?.time2f),
+        time1f: toNullableNumber(record?.time1f),
+        lap9: toNullableNumber(record?.lap9),
+        lap8: toNullableNumber(record?.lap8),
+        lap7: toNullableNumber(record?.lap7),
+        lap6: toNullableNumber(record?.lap6),
+        lap5: toNullableNumber(record?.lap5),
+        lap4: toNullableNumber(record?.lap4),
+        lap3: toNullableNumber(record?.lap3),
+        lap2: toNullableNumber(record?.lap2),
+        lap1: toNullableNumber(record?.lap1),
+        registrationNumber: record?.registrationNumber ? String(record.registrationNumber) : null,
+        affiliation: record?.affiliation ? String(record.affiliation) : null,
+      };
+      return base;
+    };
+
+    const sanitizedRecords = recordsInput.map(sanitizeRecord);
+
+    const db = createDb(c.env.DB);
+    const chunkSize = 5;
+    let inserted = 0;
+    let updated = 0;
+    for (let i = 0; i < sanitizedRecords.length; i += chunkSize) {
+      const chunk = sanitizedRecords.slice(i, i + chunkSize);
+      for (const record of chunk) {
+        const existing = await db.select({ id: trainingRecords.id })
+          .from(trainingRecords)
+          .where(and(
+            eq(trainingRecords.horseName, record.horseName),
+            eq(trainingRecords.trainingDate, record.trainingDate),
+            eq(trainingRecords.trainingTime, record.trainingTime)
+          ))
+          .limit(1)
+          .get();
+
+        if (existing?.id) {
+          await db.update(trainingRecords)
+            .set({
+              trainingType: record.trainingType,
+              facility: record.facility,
+              course: record.course ?? null,
+              turn: record.turn ?? null,
+              trainingDate: record.trainingDate,
+              weekday: record.weekday,
+              trainingTime: record.trainingTime,
+              horseName: record.horseName,
+              classCode: record.classCode ?? null,
+              sex: record.sex,
+              age: record.age,
+              trainer: record.trainer,
+              time10f: record.time10f ?? null,
+              time9f: record.time9f ?? null,
+              time8f: record.time8f ?? null,
+              time7f: record.time7f ?? null,
+              time6f: record.time6f ?? null,
+              time5f: record.time5f ?? null,
+              time4f: record.time4f ?? null,
+              time3f: record.time3f ?? null,
+              time2f: record.time2f ?? null,
+              time1f: record.time1f ?? null,
+              lap9: record.lap9 ?? null,
+              lap8: record.lap8 ?? null,
+              lap7: record.lap7 ?? null,
+              lap6: record.lap6 ?? null,
+              lap5: record.lap5 ?? null,
+              lap4: record.lap4 ?? null,
+              lap3: record.lap3 ?? null,
+              lap2: record.lap2 ?? null,
+              lap1: record.lap1 ?? null,
+              registrationNumber: record.registrationNumber ?? null,
+              affiliation: record.affiliation ?? null,
+              updatedAt: sql`CURRENT_TIMESTAMP`
+            })
+            .where(eq(trainingRecords.id, existing.id));
+          updated += 1;
+        } else {
+          await db.insert(trainingRecords).values(record as any);
+          inserted += 1;
+        }
+      }
+    }
+
+    return c.json({
+      message: `${sanitizedRecords.length}件の調教データを処理しました`,
+      inserted,
+      updated
+    });
+  } catch (error) {
+    console.error('Error inserting training records:', error);
+    return c.json({ error: '調教データの登録に失敗しました' }, 500);
+  }
+});
+
+app.post('/api/training-records/search', async (c) => {
+  try {
+    const body = await c.req.json();
+    const namesRaw = Array.isArray(body?.horseNames) ? body.horseNames : [];
+    const horseNames = namesRaw
+      .map((name: unknown) => String(name ?? '').trim())
+      .filter((name: string) => name.length > 0);
+
+    if (horseNames.length === 0) {
+      return c.json({ records: {} });
+    }
+
+    const limitRaw = parseInt(String(body?.limit ?? '3'), 10);
+    const limit = Math.min(Math.max(limitRaw || 3, 1), 5);
+
+    const db = createDb(c.env.DB);
+    const rows = await db.select({
+      id: trainingRecords.id,
+      horseName: trainingRecords.horseName,
+      trainingType: trainingRecords.trainingType,
+      facility: trainingRecords.facility,
+      course: trainingRecords.course,
+      turn: trainingRecords.turn,
+      trainingDate: trainingRecords.trainingDate,
+      weekday: trainingRecords.weekday,
+      trainingTime: trainingRecords.trainingTime,
+      trainer: trainingRecords.trainer,
+      time10f: trainingRecords.time10f,
+      time9f: trainingRecords.time9f,
+      time8f: trainingRecords.time8f,
+      time7f: trainingRecords.time7f,
+      time6f: trainingRecords.time6f,
+      time5f: trainingRecords.time5f,
+      time4f: trainingRecords.time4f,
+      time3f: trainingRecords.time3f,
+      time2f: trainingRecords.time2f,
+      time1f: trainingRecords.time1f,
+      lap9: trainingRecords.lap9,
+      lap8: trainingRecords.lap8,
+      lap7: trainingRecords.lap7,
+      lap6: trainingRecords.lap6,
+      lap5: trainingRecords.lap5,
+      lap4: trainingRecords.lap4,
+      lap3: trainingRecords.lap3,
+      lap2: trainingRecords.lap2,
+      lap1: trainingRecords.lap1,
+      registrationNumber: trainingRecords.registrationNumber,
+      affiliation: trainingRecords.affiliation,
+    })
+      .from(trainingRecords)
+      .where(inArray(trainingRecords.horseName, horseNames as any))
+      .orderBy(desc(trainingRecords.trainingDate), desc(trainingRecords.trainingTime))
+      .limit(horseNames.length * limit * 2);
+
+    const grouped: Record<string, typeof rows> = {};
+    for (const row of rows) {
+      const key = row.horseName;
+      if (!grouped[key]) grouped[key] = [];
+      if (grouped[key].length >= limit) continue;
+      grouped[key].push(row);
+    }
+
+    return c.json({ records: grouped });
+  } catch (error) {
+    console.error('Error fetching training records:', error);
+    return c.json({ error: '調教データの取得に失敗しました' }, 500);
   }
 });
 

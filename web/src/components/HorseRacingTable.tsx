@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Typography,
@@ -18,16 +18,20 @@ import {
   FormControl,
   Select,
   MenuItem,
+  IconButton,
+  Slide,
+  Switch,
+  Alert,
 } from "@mui/material";
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import './horse-info.css';
 import '../styles/focus-highlight.css';
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, BarChart3, List } from "lucide-react";
+import { ArrowLeft, BarChart3, Layers, List, X } from "lucide-react";
 import { HorseEntry } from '../types/horse';
 import { parseRaceId, formatRaceIdDisplay } from '../utils/raceUtils';
-import { AdminService, RaceResultData, RaceData, RaceBasicInfo, CoRunnerNextResponse } from '../services/adminService';
+import { AdminService, RaceResultData, RaceData, RaceBasicInfo, CoRunnerNextResponse, TrainingRecordResponse } from '../services/adminService';
 import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
 import HorseListSidebar from './HorseListSidebar';
 import AnalysisSidebar from './AnalysisSidebar';
@@ -37,6 +41,9 @@ import PrevRaceSpeedSummary, { PrevRaceSpeedSummaryItem } from './PrevRaceSpeedS
 import { useRaceUiStore } from '../store/raceUiStore';
 import { useRaceLevelStore } from '../store/raceLevelStore';
 import { useHorseFocusStore } from '../store/horseFocusStore';
+
+const TRAINING_WINDOW_DAYS = 14;
+const TRAINING_WINDOW_MS = TRAINING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 function HorseRacingTable() {
   const theme = useTheme();
@@ -59,6 +66,7 @@ function HorseRacingTable() {
   const [raceLevelOpen, setRaceLevelOpen] = useState(false);
   const [rankMode, setRankMode] = useState<'prev' | 'prev2'>('prev');
   const [analysisSidebarOpen, setAnalysisSidebarOpen] = useState(false);
+  const [hudOpen, setHudOpen] = useState(false);
   // 同日・同会場のレース一覧
   const [siblingRaces, setSiblingRaces] = useState<RaceData[]>([]);
   const [allRacesSameDate, setAllRacesSameDate] = useState<RaceData[]>([]);
@@ -78,6 +86,15 @@ function HorseRacingTable() {
     return 0;
   }, [showStickyStats, avgTimeSec, prevAvgSpeed]);
 
+  const nameColumnOverlayWidth = 'calc(var(--framew) + var(--horsenow) + var(--namew))';
+  const tableContainerRef = useRef<HTMLDivElement | null>(null);
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+  const [hudRowPositions, setHudRowPositions] = useState<Array<{ horseId: string; top: number; height: number }>>([]);
+  const [entries, setEntries] = useState<HorseEntry[]>([]);
+  const [trainingMap, setTrainingMap] = useState<Record<string, TrainingRecordResponse[]>>({});
+  const [trainingFetchError, setTrainingFetchError] = useState<string | null>(null);
+
+
   // スクロールでヘッダ領域が外れたら固定バーを表示
   useEffect(() => {
     const el = headerSentinelRef.current;
@@ -92,6 +109,107 @@ function HorseRacingTable() {
     obs.observe(el);
     return () => obs.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!hudOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setHudOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [hudOpen]);
+
+  useEffect(() => {
+    if (!entries || entries.length === 0) {
+      setTrainingMap({});
+      setTrainingFetchError(null);
+      setHudRowPositions([]);
+      return;
+    }
+
+    const horseNames = Array.from(new Set(entries.map(entry => entry.name).filter((name): name is string => Boolean(name))));
+    if (horseNames.length === 0) {
+      setTrainingMap({});
+      setTrainingFetchError(null);
+      setHudRowPositions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const admin = new AdminService();
+
+    (async () => {
+      try {
+        const records = await admin.getTrainingRecordsByHorseNames(horseNames, 20, controller.signal);
+        if (!controller.signal.aborted) {
+          setTrainingMap(records);
+          setTrainingFetchError(null);
+        }
+      } catch (error) {
+        if ((error as any)?.name === 'AbortError') return;
+        setTrainingMap({});
+        setTrainingFetchError('調教データの取得に失敗しました');
+      }
+    })();
+
+    return () => controller.abort();
+  }, [entries]);
+
+  const updateHudPositions = useCallback(() => {
+    if (!hudOpen || !tableContainerRef.current) {
+      if (!hudOpen) setHudRowPositions([]);
+      return;
+    }
+    const container = tableContainerRef.current;
+    const containerRect = container.getBoundingClientRect();
+    const scrollTop = container.scrollTop;
+    const positions: Array<{ horseId: string; top: number; height: number }> = [];
+    for (const entry of entries) {
+      const rowEl = rowRefs.current[entry.horseId];
+      if (!rowEl) continue;
+      const rect = rowEl.getBoundingClientRect();
+      const top = rect.top - containerRect.top + scrollTop;
+      positions.push({ horseId: entry.horseId, top, height: rect.height });
+    }
+    setHudRowPositions(positions);
+  }, [entries, hudOpen]);
+
+  useLayoutEffect(() => {
+    if (!hudOpen) {
+      setHudRowPositions([]);
+      return;
+    }
+    updateHudPositions();
+    const container = tableContainerRef.current;
+    if (!container) return;
+
+    const handle = () => updateHudPositions();
+    container.addEventListener('scroll', handle, { passive: true });
+    window.addEventListener('resize', handle);
+
+    const ResizeObs = typeof ResizeObserver !== 'undefined' ? ResizeObserver : null;
+    const resizeObserver = ResizeObs ? new ResizeObs(() => updateHudPositions()) : null;
+    resizeObserver?.observe(container);
+    if (resizeObserver) {
+      for (const entry of entries) {
+        const rowEl = rowRefs.current[entry.horseId];
+        if (rowEl) resizeObserver.observe(rowEl);
+      }
+    }
+
+    const raf = requestAnimationFrame(updateHudPositions);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      container.removeEventListener('scroll', handle);
+      window.removeEventListener('resize', handle);
+      resizeObserver?.disconnect();
+    };
+  }, [entries, hudOpen, trainingMap, updateHudPositions]);
 
   // 固定バーの表示条件: ヘッダーが隠れた時のみ表示
   const shouldShowSticky = showStickyStats;
@@ -138,7 +256,6 @@ function HorseRacingTable() {
     date: undefined
   });
 
-  const [entries, setEntries] = useState<HorseEntry[]>([]);
   const lastRaceSpeedItems = useMemo(() => {
     if (!entries || entries.length === 0) {
       return [] as PrevRaceSpeedSummaryItem[];
@@ -765,6 +882,161 @@ function HorseRacingTable() {
     return Math.round(v * 10) / 10;
   };
 
+  const formatKmh = (value: number | null | undefined): string => {
+    if (value === null || value === undefined || !isFinite(value)) return '-';
+    return `${Math.round(value * 10) / 10}`;
+  };
+
+  const formatTrainingDate = (date: string | null | undefined): string => {
+    if (!date) return '';
+    if (date.includes('-')) {
+      const [y, m, d] = date.split('-');
+      return `${parseInt(m, 10)}/${parseInt(d, 10)}`;
+    }
+    if (date.length === 8) {
+      return `${parseInt(date.slice(4, 6), 10)}/${parseInt(date.slice(6, 8), 10)}`;
+    }
+    return date;
+  };
+
+  const formatTrainingTime = (time: string | null | undefined): string => {
+    if (!time) return '';
+    const trimmed = time.trim();
+    if (!trimmed) return '';
+    if (trimmed.includes(':')) {
+      const [h, m] = trimmed.split(':');
+      return `${String(parseInt(h || '0', 10)).padStart(2, '0')}:${String(parseInt(m || '0', 10)).padStart(2, '0')}`;
+    }
+    if (/^\d{3,4}$/.test(trimmed)) {
+      const h = trimmed.length === 3 ? trimmed.slice(0, 1) : trimmed.slice(0, trimmed.length - 2);
+      const m = trimmed.slice(-2);
+      return `${String(parseInt(h, 10)).padStart(2, '0')}:${m}`;
+    }
+    return trimmed;
+  };
+
+  const parseTrainingRecordDate = (record: TrainingRecordResponse): Date | null => {
+    const rawDate = record.trainingDate;
+    if (!rawDate) return null;
+    let normalizedDate: string | null = null;
+    if (rawDate.includes('-')) {
+      normalizedDate = rawDate;
+    } else if (/^\d{8}$/.test(rawDate)) {
+      normalizedDate = `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}`;
+    }
+
+    if (!normalizedDate) return null;
+
+    const formattedTime = formatTrainingTime(record.trainingTime);
+    let hours = 0;
+    let minutes = 0;
+    if (formattedTime) {
+      const [h, m] = formattedTime.split(':');
+      hours = Number.parseInt(h, 10) || 0;
+      minutes = Number.parseInt(m, 10) || 0;
+    }
+
+    const isoString = `${normalizedDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return null;
+    return date;
+  };
+
+  const getTrainingRecordTimestamp = (record: TrainingRecordResponse): number | null => {
+    const date = parseTrainingRecordDate(record);
+    return date ? date.getTime() : null;
+  };
+
+  const formatTimeValue = (value: number | null | undefined): string | null => {
+    if (value === null || value === undefined || !isFinite(value)) return null;
+    const rounded = Math.round(value * 10) / 10;
+    return Number.isInteger(rounded) ? `${rounded.toFixed(1)}` : `${rounded}`;
+  };
+
+  const formatLapValue = (value: number | null | undefined): string | null => {
+    return formatTimeValue(value);
+  };
+
+  const formatTrainingDisplay = (record: TrainingRecordResponse): string => {
+    const parts: string[] = [];
+    const date = formatTrainingDate(record.trainingDate);
+    const time = formatTrainingTime(record.trainingTime);
+    if (date || time || record.weekday) {
+      const dateSegments: string[] = [];
+      if (date) dateSegments.push(date);
+      if (record.weekday) dateSegments.push(`(${record.weekday})`);
+      if (time) dateSegments.push(time);
+      parts.push(dateSegments.join(' ').trim());
+    }
+
+    const locationParts = [record.facility || ''];
+    if (record.course) locationParts.push(record.course);
+    if (record.turn) locationParts.push(record.turn);
+    const location = locationParts.filter(Boolean).join(' ');
+    if (location) parts.push(location);
+
+    const snippets: string[] = [];
+    const fourF = record.time4f ?? record.time5f ?? record.time6f ?? null;
+    const threeF = record.time3f ?? null;
+    const twoF = record.time2f ?? null;
+    const oneF = record.time1f ?? null;
+    const formattedFourF = formatTimeValue(fourF);
+    const formattedThreeF = formatTimeValue(threeF);
+    const formattedTwoF = formatTimeValue(twoF);
+    const formattedOneF = formatTimeValue(oneF);
+    const lapFour = formatLapValue(record.lap4 ?? null);
+    const lapThree = formatLapValue(record.lap3 ?? null);
+    const lapTwo = formatLapValue(record.lap2 ?? null);
+    const lapOne = formatLapValue(record.lap1 ?? null);
+
+    if (formattedFourF) snippets.push(`4F ${formattedFourF}${lapFour ? ` (${lapFour})` : ''}`);
+    if (formattedThreeF) snippets.push(`3F ${formattedThreeF}${lapThree ? ` (${lapThree})` : ''}`);
+    if (formattedTwoF) snippets.push(`2F ${formattedTwoF}${lapTwo ? ` (${lapTwo})` : ''}`);
+    if (formattedOneF) snippets.push(`1F ${formattedOneF}${lapOne ? ` (${lapOne})` : ''}`);
+    if (snippets.length > 0) parts.push(snippets.join(' / '));
+
+    return parts.join(' ｜ ');
+  };
+
+  const trainingRecordsWithinWindow = useMemo(() => {
+    const now = Date.now();
+    const result: Record<string, TrainingRecordResponse[]> = {};
+    for (const [horseName, records] of Object.entries(trainingMap)) {
+      if (!records || records.length === 0) continue;
+      const enriched = records
+        .map((record) => ({ record, timestamp: getTrainingRecordTimestamp(record) }))
+        .filter((item) => item.timestamp !== null && Math.abs(now - (item.timestamp as number)) <= TRAINING_WINDOW_MS)
+        .sort((a, b) => (b.timestamp! - a.timestamp!))
+        .map((item) => item.record);
+      if (enriched.length > 0) {
+        result[horseName] = enriched;
+      }
+    }
+    return result;
+  }, [trainingMap]);
+
+  const entriesWithTraining = useMemo(() => {
+    return entries
+      .map((entry) => ({ entry, records: trainingRecordsWithinWindow[entry.name] || [] }))
+      .filter((item) => item.records.length > 0);
+  }, [entries, trainingRecordsWithinWindow]);
+
+  const hudRowHeightMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const { horseId, height } of hudRowPositions) {
+      map.set(horseId, height);
+    }
+    return map;
+  }, [hudRowPositions]);
+
+  const entryByHorseId = useMemo(() => {
+    const map = new Map<string, HorseEntry>();
+    for (const entry of entries) {
+      map.set(entry.horseId, entry);
+    }
+    return map;
+  }, [entries]);
+
   // 前走レベル（平均賞金/頭）ランキング（テーブル外に表示）
   type PrevRankItem = { rank: number; horseId: string; horseNo: number; name: string; avg: number; raceId: string; margin?: string };
   const prevRankList: PrevRankItem[] = useMemo(() => {
@@ -840,6 +1112,11 @@ function HorseRacingTable() {
       {error && (
         <Box sx={{ mb: 2 }}>
           <Typography color="error">{error}</Typography>
+        </Box>
+      )}
+      {trainingFetchError && (
+        <Box sx={{ mb: 1 }}>
+          <Typography color="warning.main" variant="caption">{trainingFetchError}</Typography>
         </Box>
       )}
       {/* 同日・競馬場切替 + レース選択（ページ最上段・折り返し表示、スクロールなし） */}
@@ -920,6 +1197,22 @@ function HorseRacingTable() {
         >
           レース分析
         </Button>
+        {!shouldShowSticky && (
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ pl: 1, pr: 1 }}>
+            <Switch
+              checked={hudOpen}
+              onChange={(_, checked) => setHudOpen(checked)}
+              color="secondary"
+              inputProps={{ 'aria-label': 'HUD表示切替' }}
+            />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Layers size={18} />
+              <Typography component="span" sx={{ fontSize: '0.95rem' }}>
+                HUD
+              </Typography>
+            </Box>
+          </Stack>
+        )}
         <Box sx={{ flex: 1, minWidth: { xs: '100%', md: 0 } }}>
           <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
             {raceInfo.raceName}
@@ -950,7 +1243,7 @@ function HorseRacingTable() {
           </Typography>
           {prevAvgSpeed !== null && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-              前走平均時速(出走馬): {prevAvgSpeed} km/h{prevAvgSpeedCount ? `（${prevAvgSpeedCount}頭）` : ''}
+              前走平均時速(出走馬): {formatKmh(prevAvgSpeed)} km/h{prevAvgSpeedCount ? `（${prevAvgSpeedCount}頭）` : ''}
             </Typography>
           )}
         </Box>
@@ -1040,16 +1333,32 @@ function HorseRacingTable() {
           py: 0.75, px: { xs: 1, sm: 2 },
           transition: 'left 200ms ease, right 200ms ease'
         }}>
-          <Typography variant="body2" color="text.secondary">
-            {(() => {
-              const cls = (inferClassFromName(raceInfo.raceName) || raceInfo.className) || '-';
-              const has = avgTimeSec !== null && avgTimeCount > 0;
-              const timePart = has ? formatSecondsToRace(avgTimeSec) : 'データなし';
-              const countPart = has ? `（${avgTimeCount}件）` : '';
-              const speedPart = has ? ` ／ 平均時速: ${speedFromSeconds(raceInfo.distance, avgTimeSec) ?? '-'} km/h` : '';
-              return `平均タイム(過去1年・${cls} ${raceInfo.distance}m): ${timePart}${countPart}${speedPart}`;
-            })()}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: { xs: 1, sm: 1.5 } }}>
+            <Typography variant="body2" color="text.secondary">
+              {(() => {
+                const cls = (inferClassFromName(raceInfo.raceName) || raceInfo.className) || '-';
+                const has = avgTimeSec !== null && avgTimeCount > 0;
+                const timePart = has ? formatSecondsToRace(avgTimeSec) : 'データなし';
+                const countPart = has ? `（${avgTimeCount}件）` : '';
+                const speedPart = has ? ` ／ 平均時速: ${speedFromSeconds(raceInfo.distance, avgTimeSec) ?? '-'} km/h` : '';
+                return `平均タイム(過去1年・${cls} ${raceInfo.distance}m): ${timePart}${countPart}${speedPart}`;
+              })()}
+            </Typography>
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 'fit-content' }}>
+              <Switch
+                checked={hudOpen}
+                onChange={(_, checked) => setHudOpen(checked)}
+                color="secondary"
+                inputProps={{ 'aria-label': 'HUD表示切替' }}
+              />
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Layers size={18} />
+                <Typography component="span" sx={{ fontSize: '0.95rem' }}>
+                  HUD
+                </Typography>
+              </Box>
+            </Stack>
+          </Box>
           {prevRankList.length > 0 && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
               <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
@@ -1068,7 +1377,7 @@ function HorseRacingTable() {
           )}
           {prevAvgSpeed !== null && (
             <Typography variant="body2" color="text.secondary">
-              前走平均時速(出走馬): {prevAvgSpeed} km/h{prevAvgSpeedCount ? `（${prevAvgSpeedCount}頭）` : ''}
+              前走平均時速(出走馬): {formatKmh(prevAvgSpeed)} km/h{prevAvgSpeedCount ? `（${prevAvgSpeedCount}頭）` : ''}
             </Typography>
           )}
         </Box>
@@ -1102,7 +1411,12 @@ function HorseRacingTable() {
 
       {(activeTab === 'entries' || !hasResults) && (
       <>
-      <TableContainer component={Paper} sx={{ maxWidth: '100%', overflowX: 'auto' }}>
+      <Box sx={{ position: 'relative' }}>
+      <TableContainer
+        component={Paper}
+        sx={{ maxWidth: '100%', overflowX: 'auto' }}
+        ref={tableContainerRef}
+      >
         <Table size="small" stickyHeader aria-label="race entries table" sx={{ minWidth: 850, '& td, & th': { px: { xs: 0.25, sm: 0.5 } }, '& .MuiTableCell-stickyHeader': { top: `${stickyOffset}px !important` } }}>
           <TableHead>
             <TableRow>
@@ -1123,7 +1437,17 @@ function HorseRacingTable() {
               const rowClassName = isFocused ? 'focus-active-row' : undefined;
 
               return (
-                <TableRow key={h.horseId} className={rowClassName}>
+                <TableRow
+                  key={h.horseId}
+                  className={rowClassName}
+                  ref={(el) => {
+                    if (el) {
+                      rowRefs.current[h.horseId] = el;
+                    } else {
+                      delete rowRefs.current[h.horseId];
+                    }
+                  }}
+                >
                 <TableCell align="center" sx={{ position: 'sticky', left: 0, zIndex: 0, bgcolor: 'background.paper', minWidth: 'var(--framew)', width: 'var(--framew)' }}>
                   <Chip 
                     label={h.frameNo} 
@@ -1475,6 +1799,167 @@ function HorseRacingTable() {
           </TableBody>
         </Table>
       </TableContainer>
+      <Box
+        sx={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 30,
+          pointerEvents: hudOpen ? 'auto' : 'none',
+          visibility: hudOpen ? 'visible' : 'hidden'
+        }}
+        onClick={() => setHudOpen(false)}
+      >
+        <Slide direction="down" in={hudOpen} mountOnEnter unmountOnExit appear>
+          <Paper
+            elevation={8}
+            onClick={(event) => event.stopPropagation()}
+            sx={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              justifyContent: 'flex-start',
+              alignItems: 'stretch',
+              bgcolor: 'transparent',
+              color: 'common.white',
+              borderRadius: (theme) => theme.shape.borderRadius,
+              border: '1px solid rgba(148, 163, 184, 0.18)',
+              boxShadow: 'none',
+              p: 0
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="出馬表HUD"
+          >
+            <Box
+              sx={{
+                flex: `0 0 ${nameColumnOverlayWidth}`,
+                maxWidth: nameColumnOverlayWidth,
+                height: '100%',
+                position: 'relative',
+                bgcolor: 'transparent',
+                pointerEvents: 'none',
+                px: 0,
+                py: 0
+              }}
+            >
+              {hudRowPositions.map(({ horseId, top, height }) => {
+                const entry = entryByHorseId.get(horseId);
+                if (!entry) return null;
+                const records = trainingRecordsWithinWindow[entry.name] || [];
+                if (records.length === 0) return null;
+                return (
+                  <Box
+                    key={`hud-overlay-${horseId}`}
+                    sx={{
+                      position: 'absolute',
+                      top,
+                      height,
+                      left: 0,
+                      right: 0,
+                      display: 'flex',
+                      alignItems: 'stretch'
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        position: 'relative',
+                        width: '100%',
+                        pointerEvents: 'none'
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          inset: 0,
+                          borderRadius: 1,
+                          bgcolor: 'rgba(255, 255, 255, 0.02)',
+                          border: '1px solid rgba(148, 163, 184, 0.18)',
+                          boxShadow: '0 6px 16px rgba(15, 23, 42, 0.04)'
+                        }}
+                      />
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Box>
+            <Box
+              sx={{
+                flex: 1,
+                height: '100%',
+                px: 0,
+                py: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0,
+                bgcolor: 'transparent',
+                color: '#111827',
+                backdropFilter: 'blur(4px)',
+                pointerEvents: 'auto'
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, mb: 0.75 }}>
+                <Chip label="HUD" size="small" sx={{ bgcolor: 'rgba(59, 130, 246, 0.15)', color: 'rgba(37, 99, 235, 1)', fontWeight: 600 }} />
+                <IconButton
+                  aria-label="HUDを閉じる"
+                  onClick={() => setHudOpen(false)}
+                  size="small"
+                  sx={{ color: 'text.primary', bgcolor: 'rgba(148, 163, 184, 0.2)', '&:hover': { bgcolor: 'rgba(148, 163, 184, 0.35)' } }}
+                >
+                  <X size={16} />
+                </IconButton>
+              </Box>
+              <Divider sx={{ borderColor: 'rgba(148, 163, 184, 0.35)' }} />
+              <Stack spacing={0} sx={{ flexGrow: 1, overflowY: 'auto', pr: 0.5 }}>
+                {trainingFetchError && (
+                  <Alert severity="warning" sx={{ bgcolor: 'rgba(253, 230, 138, 0.35)', color: '#854d0e' }}>
+                    {trainingFetchError}
+                  </Alert>
+                )}
+
+                {entriesWithTraining.length > 0 ? (
+                  <Stack spacing={0}>
+                    {entriesWithTraining.map(({ entry, records }) => (
+                      <Box
+                        key={`hud-training-${entry.horseId}`}
+                        sx={{
+                          border: '1px solid rgba(148, 163, 184, 0.4)',
+                          borderRadius: 1,
+                          px: 1,
+                          py: 0.75,
+                          boxShadow: '0 6px 16px rgba(15, 23, 42, 0.08)',
+                          height: hudRowHeightMap.get(entry.horseId) ?? 'auto',
+                          boxSizing: 'border-box',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'center',
+                          mx: 0.75,
+                          my: 0
+                        }}
+                      >
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', mb: 0.5 }}>
+                          {entry.horseNo}-{entry.name}
+                        </Typography>
+                        <Stack spacing={0.25}>
+                          {records.map((record) => (
+                            <Typography key={`${record.id}-hud`} variant="caption" sx={{ display: 'block', color: '#475569' }}>
+                              {record.trainingType === 'hill' ? '坂路' : 'ウッド'} ｜ {formatTrainingDisplay(record)}
+                            </Typography>
+                          ))}
+                        </Stack>
+                      </Box>
+                    ))}
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" sx={{ color: '#64748b' }}>
+                    調教データが登録されていません。
+                  </Typography>
+                )}
+              </Stack>
+            </Box>
+          </Paper>
+        </Slide>
+      </Box>
+      </Box>
       </>
       )}
 
