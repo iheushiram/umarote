@@ -754,6 +754,26 @@ describe('Umarote API (mocked DB)', () => {
     expect(nextForH2.nextFinish).toBe(2);
   });
 
+  it('excludes co-runner results on or after the specified beforeDate', async () => {
+    const res = await fetchWithEnv('/api/races/co-runners/next', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raceIds: [PREV_RACE], beforeDate: '20250101' }),
+    });
+
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.races).toHaveLength(1);
+
+    const info = body.races[0];
+    expect(info.totalCoRunners).toBe(2);
+
+    info.runners.forEach((runner: any) => {
+      expect(runner.nextRaceId).toBeNull();
+      expect(runner.nextFinish).toBeNull();
+    });
+  });
+
   it('computes speed metrics for multiple horses', async () => {
     const res = await fetchWithEnv('/api/races/speed-metrics', {
       method: 'POST',
