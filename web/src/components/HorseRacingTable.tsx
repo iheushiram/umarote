@@ -44,6 +44,13 @@ import { useHorseFocusStore } from '../store/horseFocusStore';
 
 const TRAINING_WINDOW_DAYS = 14;
 const TRAINING_WINDOW_MS = TRAINING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+const TRAINING_RANKING_LIMIT = 15;
+
+type TrainingRankingItem = {
+  entry: HorseEntry;
+  record: TrainingRecordResponse;
+  fourFTime: number;
+};
 
 function HorseRacingTable() {
   const theme = useTheme();
@@ -67,6 +74,7 @@ function HorseRacingTable() {
   const [rankMode, setRankMode] = useState<'prev' | 'prev2'>('prev');
   const [analysisSidebarOpen, setAnalysisSidebarOpen] = useState(false);
   const [hudOpen, setHudOpen] = useState(false);
+  const [hudTab, setHudTab] = useState<'individual' | 'ranking'>('individual');
   // 同日・同会場のレース一覧
   const [siblingRaces, setSiblingRaces] = useState<RaceData[]>([]);
   const [allRacesSameDate, setAllRacesSameDate] = useState<RaceData[]>([]);
@@ -1006,6 +1014,26 @@ function HorseRacingTable() {
     return parts.join(' ｜ ');
   };
 
+  const extractNumber = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  const formatSectionTime = (
+    record: TrainingRecordResponse,
+    timeKey: keyof TrainingRecordResponse,
+    lapKey: keyof TrainingRecordResponse
+  ): string => {
+    const time = formatTimeValue(extractNumber(record[timeKey]));
+    const lap = formatLapValue(extractNumber(record[lapKey]));
+    if (!time) return '-';
+    return lap ? `${time} (${lap})` : time;
+  };
+
   const trainingRecordsWithinWindow = useMemo(() => {
     const now = Date.now();
     const result: Record<string, TrainingRecordResponse[]> = {};
@@ -1044,6 +1072,102 @@ function HorseRacingTable() {
     }
     return map;
   }, [entries]);
+
+  const top4fByType = useMemo(() => {
+    const rankings: Record<'hill' | 'wood', TrainingRankingItem[]> = { hill: [], wood: [] };
+
+    for (const entry of entries) {
+      const records = trainingRecordsWithinWindow[entry.name] || [];
+      if (!records.length) continue;
+
+      (['wood', 'hill'] as const).forEach((type) => {
+        let best: TrainingRankingItem | null = null;
+        for (const record of records) {
+          if (record.trainingType !== type) continue;
+          const fourF = extractNumber(record.time4f ?? record.time5f ?? record.time6f ?? null);
+          if (fourF === null) continue;
+          const candidate: TrainingRankingItem = { entry, record, fourFTime: fourF };
+          if (!best) {
+            best = candidate;
+            continue;
+          }
+          if (fourF < best.fourFTime) {
+            best = candidate;
+            continue;
+          }
+          if (fourF === best.fourFTime) {
+            const tsCurrent = getTrainingRecordTimestamp(record) ?? 0;
+            const tsBest = getTrainingRecordTimestamp(best.record) ?? 0;
+            if (tsCurrent > tsBest) {
+              best = candidate;
+            }
+          }
+        }
+
+        if (best) {
+          rankings[type].push(best);
+        }
+      });
+    }
+
+    const comparator = (a: TrainingRankingItem, b: TrainingRankingItem) => {
+      if (a.fourFTime !== b.fourFTime) return a.fourFTime - b.fourFTime;
+      return a.entry.horseNo - b.entry.horseNo;
+    };
+
+    return {
+      wood: rankings.wood.sort(comparator).slice(0, TRAINING_RANKING_LIMIT),
+      hill: rankings.hill.sort(comparator).slice(0, TRAINING_RANKING_LIMIT),
+    };
+  }, [entries, trainingRecordsWithinWindow]);
+
+  const renderRankingTable = (type: 'wood' | 'hill', label: string) => {
+    const items = top4fByType[type];
+    if (!items.length) return null;
+    const includeSixF = type === 'wood';
+    const includeFiveF = type === 'wood';
+    return (
+      <Box sx={{ flex: 1, minWidth: { xs: '100%', sm: 0 } }} key={`ranking-${type}`}>
+        <Typography variant="body2" sx={{ fontWeight: 600, color: '#1f2937', mb: 0.5 }}>
+          {label}
+        </Typography>
+        <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 1, overflowX: 'auto' }}>
+          <Table size="small" sx={{ '& th, & td': { whiteSpace: 'nowrap', fontSize: '0.8rem', py: 0.5, px: 0.75 } }}>
+            <TableHead>
+              <TableRow>
+                <TableCell align="center" sx={{ width: 56 }}>順位</TableCell>
+                <TableCell>馬名</TableCell>
+                {includeSixF && <TableCell align="center">6F</TableCell>}
+                {includeFiveF && <TableCell align="center">5F</TableCell>}
+                <TableCell align="center">4F</TableCell>
+                <TableCell align="center">3F</TableCell>
+                <TableCell align="center">2F</TableCell>
+                <TableCell align="center">1F</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {items.map((item, idx) => (
+                <TableRow key={`ranking-${type}-${item.entry.horseId}-${item.record.id ?? idx}` }>
+                  <TableCell align="center">{idx + 1}</TableCell>
+                  <TableCell>{`${item.entry.horseNo}-${item.entry.name}`}</TableCell>
+                  {includeSixF && (
+                    <TableCell align="center">{formatSectionTime(item.record, 'time6f', 'lap6')}</TableCell>
+                  )}
+                  {includeFiveF && (
+                    <TableCell align="center">{formatSectionTime(item.record, 'time5f', 'lap5')}</TableCell>
+                  )}
+                  <TableCell align="center">{formatSectionTime(item.record, 'time4f', 'lap4')}</TableCell>
+                  <TableCell align="center">{formatSectionTime(item.record, 'time3f', 'lap3')}</TableCell>
+                  <TableCell align="center">{formatSectionTime(item.record, 'time2f', 'lap2')}</TableCell>
+                  <TableCell align="center">{formatSectionTime(item.record, 'time1f', 'lap1')}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Box>
+    );
+  };
 
   // 前走レベル（平均賞金/頭）ランキング（テーブル外に表示）
   type PrevRankItem = { rank: number; horseId: string; horseNo: number; name: string; avg: number; raceId: string; margin?: string };
@@ -1899,14 +2023,24 @@ function HorseRacingTable() {
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 0,
-                bgcolor: 'transparent',
+                bgcolor: 'rgba(255,255,255,0.92)',
                 color: '#111827',
-                backdropFilter: 'blur(4px)',
+                backdropFilter: 'blur(6px)',
                 pointerEvents: 'auto'
               }}
             >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5, mb: 0.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, px: 0.75, py: 0.25 }}>
                 <Chip label="HUD" size="small" sx={{ bgcolor: 'rgba(59, 130, 246, 0.15)', color: 'rgba(37, 99, 235, 1)', fontWeight: 600 }} />
+                <Tabs
+                  value={hudTab}
+                  onChange={(_, value) => setHudTab(value)}
+                  textColor="primary"
+                  indicatorColor="primary"
+                  sx={{ flex: 1, minHeight: 32, '& .MuiTab-root': { fontSize: '0.8rem', minHeight: 32, py: 0 } }}
+                >
+                  <Tab value="individual" label="個別" />
+                  <Tab value="ranking" label="ランキング" />
+                </Tabs>
                 <IconButton
                   aria-label="HUDを閉じる"
                   onClick={() => setHudOpen(false)}
@@ -1923,43 +2057,63 @@ function HorseRacingTable() {
                     {trainingFetchError}
                   </Alert>
                 )}
-
-                {entriesWithTraining.length > 0 ? (
-                  <Stack spacing={0}>
-                    {entriesWithTraining.map(({ entry, records }) => (
-                      <Box
-                        key={`hud-training-${entry.horseId}`}
-                        sx={{
-                          border: '1px solid rgba(148, 163, 184, 0.4)',
-                          borderRadius: 1,
-                          px: 1,
-                          boxShadow: '0 6px 16px rgba(15, 23, 42, 0.08)',
-                          height: hudRowHeightMap.get(entry.horseId) ?? 'auto',
-                          boxSizing: 'border-box',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          justifyContent: 'center',
-                          mx: 0.75,
-                          my: 0,
-                        }}
-                      >
-                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', mb: 0.5 }}>
-                          {entry.horseNo}-{entry.name}
-                        </Typography>
-                        <Stack spacing={0.25}>
-                          {records.map((record) => (
-                            <Typography key={`${record.id}-hud`} variant="caption" sx={{ display: 'block', color: '#475569' }}>
-                              {record.trainingType === 'hill' ? '坂路' : 'ウッド'} ｜ {formatTrainingDisplay(record)}
-                            </Typography>
-                          ))}
-                        </Stack>
-                      </Box>
-                    ))}
-                  </Stack>
+                {hudTab === 'individual' ? (
+                  entriesWithTraining.length > 0 ? (
+                    <Stack spacing={0}>
+                      {entriesWithTraining.map(({ entry, records }) => (
+                        <Box
+                          key={`hud-training-${entry.horseId}`}
+                          sx={{
+                            border: '1px solid rgba(148, 163, 184, 0.4)',
+                            borderRadius: 1,
+                            px: 1,
+                            boxShadow: '0 6px 16px rgba(15, 23, 42, 0.08)',
+                            height: hudRowHeightMap.get(entry.horseId) ?? 'auto',
+                            boxSizing: 'border-box',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'center',
+                            mx: 0.75,
+                            my: 0,
+                          }}
+                        >
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', mb: 0.5 }}>
+                            {entry.horseNo}-{entry.name}
+                          </Typography>
+                          <Stack spacing={0.25}>
+                            {records.map((record) => (
+                              <Typography key={`${record.id}-hud`} variant="caption" sx={{ display: 'block', color: '#475569' }}>
+                                {record.trainingType === 'hill' ? '坂路' : 'ウッド'} ｜ {formatTrainingDisplay(record)}
+                              </Typography>
+                            ))}
+                          </Stack>
+                        </Box>
+                      ))}
+                    </Stack>
+                  ) : (
+                    <Typography variant="body2" sx={{ color: '#64748b', px: 1, py: 1 }}>
+                      調教データが登録されていません。
+                    </Typography>
+                  )
                 ) : (
-                  <Typography variant="body2" sx={{ color: '#64748b' }}>
-                    調教データが登録されていません。
-                  </Typography>
+                  <Stack spacing={1.25} sx={{ px: 1, py: 1 }}>
+                    {(top4fByType.wood.length > 0 || top4fByType.hill.length > 0) && (
+                      <>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600, color: '#1f2937', mb: 0.75 }}>
+                          4F上位タイム
+                        </Typography>
+                        <Stack spacing={1.5}>
+                          {renderRankingTable('wood', 'ウッド')}
+                          {renderRankingTable('hill', '坂路')}
+                        </Stack>
+                      </>
+                    )}
+                    {top4fByType.wood.length === 0 && top4fByType.hill.length === 0 && (
+                      <Typography variant="body2" sx={{ color: '#64748b' }}>
+                        ランキングを表示できる調教データがありません。
+                      </Typography>
+                    )}
+                  </Stack>
                 )}
               </Stack>
             </Box>
