@@ -261,12 +261,20 @@ function HorseRacingTable() {
       return [] as PrevRaceSpeedSummaryItem[];
     }
 
-    const items = entries.map((entry) => {
+    const items: PrevRaceSpeedSummaryItem[] = [];
+    for (const entry of entries) {
       const lastRace = entry.races?.[0];
-      if (!lastRace || !lastRace.distance || !lastRace.time) return null;
+      if (!lastRace || !lastRace.distance || !lastRace.time) {
+        continue;
+      }
+      if (!lastRace.date) {
+        continue;
+      }
       const speed = calculateAverageSpeed(lastRace.distance, lastRace.time);
-      if (!speed || !isFinite(speed) || speed <= 0) return null;
-      return {
+      if (!speed || !isFinite(speed) || speed <= 0) {
+        continue;
+      }
+      items.push({
         horseId: entry.horseId,
         horseNo: entry.horseNo,
         name: entry.name,
@@ -274,10 +282,10 @@ function HorseRacingTable() {
         track: lastRace.track,
         distance: lastRace.distance,
         surface: lastRace.surface,
-        date: lastRace.date,
-        raceName: lastRace.class,
-      } satisfies PrevRaceSpeedSummaryItem;
-    }).filter((item): item is PrevRaceSpeedSummaryItem => item !== null);
+        date: lastRace.date ?? undefined,
+        raceName: lastRace.class ?? undefined,
+      });
+    }
 
     if (items.length === 0) {
       return [] as PrevRaceSpeedSummaryItem[];
