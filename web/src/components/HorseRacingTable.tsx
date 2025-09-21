@@ -1897,7 +1897,7 @@ function HorseRacingTable() {
                 pointerEvents: 'auto'
               }}
             >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, mb: 0.75 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5, mb: 0.5 }}>
                 <Chip label="HUD" size="small" sx={{ bgcolor: 'rgba(59, 130, 246, 0.15)', color: 'rgba(37, 99, 235, 1)', fontWeight: 600 }} />
                 <IconButton
                   aria-label="HUDを閉じる"
@@ -1925,7 +1925,6 @@ function HorseRacingTable() {
                           border: '1px solid rgba(148, 163, 184, 0.4)',
                           borderRadius: 1,
                           px: 1,
-                          py: 0.75,
                           boxShadow: '0 6px 16px rgba(15, 23, 42, 0.08)',
                           height: hudRowHeightMap.get(entry.horseId) ?? 'auto',
                           boxSizing: 'border-box',
@@ -1933,7 +1932,7 @@ function HorseRacingTable() {
                           flexDirection: 'column',
                           justifyContent: 'center',
                           mx: 0.75,
-                          my: 0
+                          my: 0,
                         }}
                       >
                         <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', mb: 0.5 }}>
