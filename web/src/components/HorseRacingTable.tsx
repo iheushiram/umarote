@@ -29,7 +29,7 @@ import './horse-info.css';
 import '../styles/focus-highlight.css';
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, BarChart3, Layers, List, X } from "lucide-react";
-import { HorseEntry } from '../types/horse';
+import { HorseEntry, RaceDetail } from '../types/horse';
 import { parseRaceId, formatRaceIdDisplay } from '../utils/raceUtils';
 import { AdminService, RaceResultData, RaceData, RaceBasicInfo, CoRunnerNextResponse, TrainingRecordResponse } from '../services/adminService';
 import { formatRaceTime, calculateAverageSpeed } from '../utils/timeUtils';
@@ -45,6 +45,8 @@ import { useHorseFocusStore } from '../store/horseFocusStore';
 const TRAINING_WINDOW_DAYS = 14;
 const TRAINING_WINDOW_MS = TRAINING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 const TRAINING_RANKING_LIMIT = 15;
+const LEFT_TURN_TRACKS = new Set(['東京', '中京', '新潟']);
+const RIGHT_TURN_TRACKS = new Set(['札幌', '函館', '福島', '中山', '阪神', '京都', '小倉']);
 
 type TrainingRankingItem = {
   entry: HorseEntry;
@@ -603,7 +605,8 @@ function HorseRacingTable() {
               jockey: r.jockey,
               weightCarried: r.weight,
               margin: r.margin,
-              isFeature: !!(r.raceName?.match(/G[1-3]|重賞|特別/))
+              isFeature: !!(r.raceName?.match(/G[1-3]|重賞|特別/)),
+              direction: r.direction
             };
           });
 
@@ -1213,11 +1216,105 @@ function HorseRacingTable() {
   // モックのクッション値別成績（horseId -> range -> [1,2,3,other]）
   const cushionStats: Record<string, Record<CushionRange, [number, number, number, number]>> = {} as any;
 
-  // 周り方選択とモック成績
-  type Turn = 'none' | 'left' | 'right';
-  const turnLabels: Record<Turn, string> = { none: 'なし', left: '左回り', right: '右回り' };
-  const [selectedTurn, setSelectedTurn] = useState<Turn>('left');
-  const turnStats: Record<string, Record<Turn, [number, number, number, number]>> = {} as any;
+  type TurnKey = 'left' | 'right';
+  const formatTurnCounts = (counts: [number, number, number, number] | undefined): string => {
+    if (!counts) return '-';
+    const total = counts.reduce((acc, cur) => acc + cur, 0);
+    if (total === 0) return '-';
+    return `${counts[0]}-${counts[1]}-${counts[2]}-${counts[3]}`;
+  };
+
+  const turnStatsMap = useMemo(() => {
+    const map = new Map<string, Record<TurnKey, [number, number, number, number]>>();
+
+    const increment = (target: [number, number, number, number], finish: number | undefined) => {
+      if (!finish || finish <= 0) {
+        target[3] += 1;
+        return;
+      }
+      if (finish === 1) {
+        target[0] += 1;
+      } else if (finish === 2) {
+        target[1] += 1;
+      } else if (finish === 3) {
+        target[2] += 1;
+      } else {
+        target[3] += 1;
+      }
+    };
+
+    const detectTurnKey = (race: RaceDetail): TurnKey | null => {
+      const dir = race.direction;
+      if (dir === '左') return 'left';
+      if (dir === '右') return 'right';
+      const track = race.track?.trim();
+      if (!track) return null;
+      if (LEFT_TURN_TRACKS.has(track)) return 'left';
+      if (RIGHT_TURN_TRACKS.has(track)) return 'right';
+      return null;
+    };
+
+    for (const entry of entries) {
+      const stats: Record<TurnKey, [number, number, number, number]> = {
+        left: [0, 0, 0, 0],
+        right: [0, 0, 0, 0]
+      };
+
+      for (const race of entry.races) {
+        const key = detectTurnKey(race);
+        if (!key) continue;
+        increment(stats[key], race.position);
+      }
+
+      map.set(entry.horseId, stats);
+    }
+
+    return map;
+  }, [entries]);
+
+  const raceTurnKey: TurnKey | null = useMemo(() => {
+    const direction = raceInfo.direction;
+    if (direction === '左') return 'left';
+    if (direction === '右') return 'right';
+    const venue = raceInfo.venue?.trim();
+    if (venue && LEFT_TURN_TRACKS.has(venue)) return 'left';
+    if (venue && RIGHT_TURN_TRACKS.has(venue)) return 'right';
+    return null;
+  }, [raceInfo.direction, raceInfo.venue]);
+
+  const venueStatsMap = useMemo(() => {
+    const map = new Map<string, Map<string, [number, number, number, number]>>();
+
+    const increment = (target: [number, number, number, number], finish: number | undefined) => {
+      if (!finish || finish <= 0) {
+        target[3] += 1;
+        return;
+      }
+      if (finish === 1) {
+        target[0] += 1;
+      } else if (finish === 2) {
+        target[1] += 1;
+      } else if (finish === 3) {
+        target[2] += 1;
+      } else {
+        target[3] += 1;
+      }
+    };
+
+    for (const entry of entries) {
+      const venueMap = new Map<string, [number, number, number, number]>();
+      for (const race of entry.races) {
+        const venue = race.track?.trim();
+        if (!venue) continue;
+        const current = venueMap.get(venue) ?? [0, 0, 0, 0];
+        increment(current, race.position);
+        venueMap.set(venue, current);
+      }
+      map.set(entry.horseId, venueMap);
+    }
+
+    return map;
+  }, [entries]);
 
   // ツールチップ廃止に伴いホバー用関数は未使用
 
@@ -1410,21 +1507,6 @@ function HorseRacingTable() {
             )}
           </Box>
         )}
-      </Stack>
-
-      {/* 周り方選択（チップボタン） */}
-      <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-        {(Object.keys(turnLabels) as Turn[]).map((t) => (
-          <Chip
-            key={t}
-            label={turnLabels[t]}
-            clickable
-            color={selectedTurn === t ? 'primary' : 'default'}
-            variant={selectedTurn === t ? 'filled' : 'outlined'}
-            onClick={() => setSelectedTurn(t)}
-            size="small"
-          />
-        ))}
       </Stack>
 
       {/* 前走/前前走 レベルランキング（サイドメニュー） */}
@@ -1638,14 +1720,24 @@ function HorseRacingTable() {
                         return `クッション: ${rec[0]}-${rec[1]}-${rec[2]}-${rec[3]}`;
                       })()}
                     </div>
-                    {/* 周り方別成績（選択周り）: 非表示時も高さ確保 */}
-                    <div className="horse-info__turn" style={{ visibility: selectedTurn === 'none' ? 'hidden' as const : 'visible' as const }}>
+                    {/* 周り方別成績 */}
+                    <div className="horse-info__turn" style={{ visibility: 'visible', flexDirection: 'column', alignItems: 'flex-end' }}>
                       {(() => {
-                        if (selectedTurn === 'none') return '左回り: -';
-                        const rec = turnStats[h.horseId]?.[selectedTurn as Exclude<Turn, 'none'>];
-                        const tLabel = selectedTurn === 'left' ? '左回り' : '右回り';
-                        if (!rec) return `${tLabel}: -`;
-                        return `${tLabel}: ${rec[0]}-${rec[1]}-${rec[2]}-${rec[3]}`;
+                        const stats = turnStatsMap.get(h.horseId);
+                        const leftCounts = formatTurnCounts(stats?.left);
+                        const rightCounts = formatTurnCounts(stats?.right);
+                        const leftStyle = raceTurnKey === 'left' ? { color: '#dc2626' } : { color: '#111827' };
+                        const rightStyle = raceTurnKey === 'right' ? { color: '#dc2626' } : { color: '#111827' };
+                        const venueName = raceInfo.venue?.trim();
+                        const venueCounts = venueName ? formatTurnCounts(venueStatsMap.get(h.horseId)?.get(venueName)) : '-';
+                        const venueLabel = venueName ? `${venueName}: ${venueCounts}` : `開催: ${venueCounts}`;
+                        return (
+                          <>
+                            <span style={leftStyle}>左回り: {leftCounts}</span>
+                            <span style={rightStyle}>右回り: {rightCounts}</span>
+                            <span style={{ color: '#0f172a' }}>{venueLabel}</span>
+                          </>
+                        );
                       })()}
                     </div>
                     {(() => {

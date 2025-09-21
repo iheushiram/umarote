@@ -153,6 +153,7 @@ export interface RaceDetail {
   // 賞金情報
   prizeMoney?: number; // 本賞金（万円）
   earnedMoney?: number; // 収得賞金（万円）
+  direction?: '右' | '左';
 }
 
 // 馬柱用馬情報
