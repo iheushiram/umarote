@@ -3,7 +3,17 @@ import { Box, Paper } from '@mui/material';
 import PrevRankPanel from '../components/PrevRankPanel';
 import RaceLevelRankPanel from '../components/RaceLevelRankPanel';
 
-export default function RacePageLayout({ children }: { children: React.ReactNode }) {
+export default function RacePageLayout({
+  children,
+  onToggleCoRunners,
+  expandedMap,
+  renderCoRunnerContent
+}: {
+  children: React.ReactNode
+  onToggleCoRunners?: (horseId: string) => void
+  expandedMap?: Record<string, boolean>
+  renderCoRunnerContent?: (horseId: string) => React.ReactNode
+}) {
   return (
     <Box sx={{
       py: 4,
@@ -23,7 +33,11 @@ export default function RacePageLayout({ children }: { children: React.ReactNode
       {/* 左カラム（レースレベルランキング：UIのみ） */}
       <Box sx={{ display: { xs: 'none', lg: 'none' }, '@media (min-width:1900px)': { display: 'block' }, gridColumn: { lg: 1 }, pl: 2, position: 'sticky', top: 24, alignSelf: 'start' }}>
         <Paper elevation={1} sx={{ p: 2, maxHeight: 'calc(100vh - 48px)', overflow: 'auto' }}>
-          <RaceLevelRankPanel />
+          <RaceLevelRankPanel
+            onToggleCoRunners={onToggleCoRunners}
+            expandedMap={expandedMap}
+            renderCoRunnerContent={renderCoRunnerContent}
+          />
         </Paper>
       </Box>
       {/* 中央カラム（出馬表） */}

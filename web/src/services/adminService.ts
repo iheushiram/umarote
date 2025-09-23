@@ -427,6 +427,22 @@ export class AdminService {
     }
   }
 
+  async getCoRunnerNextResults(raceId: string, beforeDate?: string): Promise<any[]> {
+    try {
+      const url = beforeDate
+        ? `${API_BASE_URL}/api/co-runner-next-results/${raceId}?beforeDate=${beforeDate}`
+        : `${API_BASE_URL}/api/co-runner-next-results/${raceId}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('同走馬次走結果の取得に失敗しました');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error getting co-runner next results:', error);
+      return [];
+    }
+  }
+
   async getVenueData(date: string): Promise<VenueBoard[]> {
     try {
       const response = await fetch(`${API_BASE_URL}/api/venues?date=${date}`);
@@ -562,27 +578,6 @@ export class AdminService {
       return Array.isArray(data.races) ? data.races : [];
     } catch (error) {
       console.error('Error getting race basics:', error);
-      return [];
-    }
-  }
-
-  async getCoRunnerNextResults(raceIds: string[], options?: { beforeDate?: string }): Promise<CoRunnerNextResponse[]> {
-    try {
-      if (!Array.isArray(raceIds) || raceIds.length === 0) return [];
-      const payload: any = { raceIds };
-      if (options?.beforeDate) payload.beforeDate = options.beforeDate;
-      const response = await fetch(`${API_BASE_URL}/api/races/co-runners/next`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) {
-        throw new Error('同走馬次走情報の取得に失敗しました');
-      }
-      const data = await response.json();
-      return Array.isArray(data?.races) ? data.races : [];
-    } catch (error) {
-      console.error('Error getting co-runner next results:', error);
       return [];
     }
   }

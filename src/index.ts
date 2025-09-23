@@ -6,6 +6,33 @@ import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
 import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry, NewTrainingRecord } from './db/schema';
 import { eq, sql, and, inArray, desc, lt, lte, gte, gt } from 'drizzle-orm';
 
+// レース名からクラス情報を抽出する関数
+function extractClassFromRaceName(raceName: string): string {
+  if (!raceName) return '-';
+
+  // 新馬・未勝利
+  if (raceName.includes('新馬')) return '新馬';
+  if (raceName.includes('未勝利')) return '未勝利';
+
+  // 勝利クラス
+  if (raceName.includes('１勝') || raceName.includes('1勝')) return '1勝クラス';
+  if (raceName.includes('２勝') || raceName.includes('2勝')) return '2勝クラス';
+  if (raceName.includes('３勝') || raceName.includes('3勝')) return '3勝クラス';
+
+  // オープン・重賞
+  if (raceName.includes('オープン') || raceName.includes('OP')) return 'オープン';
+  if (raceName.includes('Ｇ１') || raceName.includes('G1')) return 'G1';
+  if (raceName.includes('Ｇ２') || raceName.includes('G2')) return 'G2';
+  if (raceName.includes('Ｇ３') || raceName.includes('G3')) return 'G3';
+
+  // 特別・条件戦
+  if (raceName.includes('特別')) return '特別';
+  if (raceName.includes('条件')) return '条件戦';
+
+  // デフォルト
+  return '条件戦';
+}
+
 type EntryForDedup = {
   id: number;
   horseId: string | null;
@@ -291,7 +318,7 @@ app.post('/api/races', async (c) => {
   }
 });
 
-// レース結果のCRUD操作
+// レース結果のCRUD操作（馬名付き）
 app.get('/api/race-results', async (c) => {
   const db = createDb(c.env.DB);
   const raceId = c.req.query('raceId');
@@ -307,16 +334,47 @@ app.get('/api/race-results', async (c) => {
   if (beforeDate) conditions.push(lt(raceResults.date, beforeDate)); // 当日より前のみ
   const whereClause: any = conditions.length > 0 ? and(...conditions as any) : undefined;
 
-  // 並び替え: 日付降順 → 人気昇順
-  const query = db.select().from(raceResults)
+  // 並び替え: 日付降順 → 人気昇順（horsesテーブルとJOINして馬名を取得）
+  const query = db.select({
+    id: raceResults.id,
+    raceId: raceResults.raceId,
+    horseId: raceResults.horseId,
+    horseName: horses.name,
+    date: raceResults.date,
+    raceName: raceResults.raceName,
+    venue: raceResults.venue,
+    courseType: raceResults.courseType,
+    distance: raceResults.distance,
+    direction: raceResults.direction,
+    courseConf: raceResults.courseConf,
+    weather: raceResults.weather,
+    courseCondition: raceResults.courseCondition,
+    pos1c: raceResults.pos1c,
+    finishPosition: raceResults.finishPosition,
+    jockey: raceResults.jockey,
+    weight: raceResults.weight,
+    time: raceResults.time,
+    margin: raceResults.margin,
+    pos2c: raceResults.pos2c,
+    pos3c: raceResults.pos3c,
+    pos4c: raceResults.pos4c,
+    cornerPassings: raceResults.cornerPassings,
+    averagePosition: raceResults.averagePosition,
+    lastThreeFurlong: raceResults.lastThreeFurlong,
+    averageThreeFurlong: raceResults.averageThreeFurlong,
+    odds: raceResults.odds,
+    popularity: raceResults.popularity,
+    createdAt: raceResults.createdAt,
+    updatedAt: raceResults.updatedAt
+  })
+    .from(raceResults)
+    .leftJoin(horses, eq(raceResults.horseId, horses.id))
     .where(whereClause as any)
     .orderBy(desc(raceResults.date), raceResults.popularity);
 
   const all = await query;
   const sliced = typeof limit === 'number' && limit > 0 ? all.slice(0, limit) : all;
-  
 
-  
   return c.json(sliced);
 });
 
@@ -1440,6 +1498,82 @@ app.get('/api/races/:raceId/entries-with-history', async (c) => {
   } catch (error) {
     console.error('Error getting race entries with history:', error);
     return c.json({ error: '出馬表＋直近結果の取得に失敗しました' }, 500);
+  }
+});
+
+// 同走馬の次走結果を取得
+app.get('/api/co-runner-next-results/:raceId', async (c) => {
+  try {
+    const db = createDb(c.env.DB);
+    const raceId = c.req.param('raceId');
+    const beforeDate = c.req.query('beforeDate'); // クエリパラメータとして日付フィルタを追加
+
+    // 指定レースの出走馬を取得
+    const raceEntries = await db.select()
+      .from(raceResults)
+      .where(eq(raceResults.raceId, raceId));
+
+    if (raceEntries.length === 0) {
+      return c.json({ totalPrevRaceEntries: 0, nextResults: [] });
+    }
+
+    // 各馬の次走結果を取得
+    const horseIds = raceEntries.map(entry => entry.horseId).filter(Boolean);
+    const raceDate = raceEntries[0]?.date;
+
+    if (!raceDate || horseIds.length === 0) {
+      return c.json({ totalPrevRaceEntries: raceEntries.length, nextResults: [] });
+    }
+
+    // 各馬の次走結果を取得（指定レース後の最初のレース）
+    const nextResults = await db.select({
+      horseId: raceResults.horseId,
+      horseName: horses.name,
+      raceId: raceResults.raceId,
+      raceName: raceResults.raceName,
+      date: raceResults.date,
+      venue: raceResults.venue,
+      finishPosition: raceResults.finishPosition,
+      margin: raceResults.margin,
+      className: races.className,
+      distance: raceResults.distance,
+      courseType: raceResults.courseType
+    })
+      .from(raceResults)
+      .leftJoin(horses, eq(raceResults.horseId, horses.id))
+      .leftJoin(races, eq(raceResults.raceId, races.raceId))
+      .where(and(
+        inArray(raceResults.horseId, horseIds),
+        gt(raceResults.date, raceDate),
+        ...(beforeDate ? [lt(raceResults.date, beforeDate)] : [])
+      ))
+      .orderBy(raceResults.horseId, raceResults.date);
+
+    // 各馬の最初の次走のみを抽出
+    const firstNextResults = [];
+    const seenHorses = new Set();
+    for (const result of nextResults) {
+      if (!seenHorses.has(result.horseId)) {
+        seenHorses.add(result.horseId);
+        // race_nameからクラス情報を抽出
+        const extractedClass = extractClassFromRaceName(result.raceName || '');
+        firstNextResults.push({
+          ...result,
+          className: extractedClass
+        });
+      }
+    }
+
+    // レスポンスに前走の総出走頭数も含める
+    const response = {
+      totalPrevRaceEntries: raceEntries.length,
+      nextResults: firstNextResults
+    };
+
+    return c.json(response);
+  } catch (error) {
+    console.error('Error getting co-runner next results:', error);
+    return c.json({ error: '同走馬次走結果の取得に失敗しました' }, 500);
   }
 });
 

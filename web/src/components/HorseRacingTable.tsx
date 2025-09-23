@@ -22,6 +22,7 @@ import {
   Slide,
   Switch,
   Alert,
+  CircularProgress,
 } from "@mui/material";
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
@@ -53,6 +54,8 @@ type TrainingRankingItem = {
   record: TrainingRecordResponse;
   fourFTime: number;
 };
+
+import RacePageLayout from '../layouts/RacePageLayout';
 
 function HorseRacingTable() {
   const theme = useTheme();
@@ -103,6 +106,9 @@ function HorseRacingTable() {
   const [entries, setEntries] = useState<HorseEntry[]>([]);
   const [trainingMap, setTrainingMap] = useState<Record<string, TrainingRecordResponse[]>>({});
   const [trainingFetchError, setTrainingFetchError] = useState<string | null>(null);
+  const [expandedCoRunnerMap, setExpandedCoRunnerMap] = useState<Record<string, boolean>>({});
+  const [coRunnerDetails, setCoRunnerDetails] = useState<Record<string, { status: 'idle' | 'loading' | 'loaded' | 'error'; raceId?: string; data?: RaceResultData[]; error?: string }>>({});
+  const coRunnerRaceCache = useRef<Map<string, RaceResultData[]>>(new Map());
 
 
   // スクロールでヘッダ領域が外れたら固定バーを表示
@@ -614,7 +620,7 @@ function HorseRacingTable() {
             horseId: e.horseId,
             frameNo: e.frameNo,
             horseNo: e.horseNo,
-            name: horse?.name || e.horseId,
+            name: horse?.name || `馬${e.horseNo || e.horseId}`,
             sexAge,
             weightCarried: e.weight,
             trainer: e.trainer || horse?.trainer || '',
@@ -648,9 +654,43 @@ function HorseRacingTable() {
           // 直近1走（「前走」）のユニークなレースID
           const prev1RaceIds = Array.from(new Set(Array.from(prev1ByHorse.values()).map(v => v.raceId)));
 
-          const coRunnerStats: CoRunnerNextResponse[] = prev1RaceIds.length > 0
-            ? await admin.getCoRunnerNextResults(prev1RaceIds, { beforeDate: calcDate })
-            : [];
+          // 各レースIDに対して個別に新しいAPIを呼び出し
+          const coRunnerStats: any[] = [];
+          for (const raceId of prev1RaceIds) {
+            try {
+              const currentRaceDate = raceInfo?.date; // 現在のレースの日付を取得
+              const results = await admin.getCoRunnerNextResults(raceId, currentRaceDate);
+
+              // 新しいAPIのレスポンス形式に合わせて変換
+              if (results) {
+                // 新しいAPIレスポンス形式をチェック
+                const nextResults = (results as any).nextResults || results; // 後方互換性
+                const totalPrevRaceEntries = (results as any).totalPrevRaceEntries || (nextResults.length + 1);
+
+                if (Array.isArray(nextResults) && nextResults.length > 0) {
+                  const runners = nextResults.map((r: any) => ({
+                    horseId: r.horseId,
+                    nextFinish: r.finishPosition,
+                    nextRaceId: r.raceId
+                  }));
+                  coRunnerStats.push({
+                    raceId: raceId,
+                    runners: runners,
+                    totalCoRunners: totalPrevRaceEntries
+                  });
+                } else if (totalPrevRaceEntries > 0) {
+                  // 次走結果がない場合でも前走の頭数情報は保持
+                  coRunnerStats.push({
+                    raceId: raceId,
+                    runners: [],
+                    totalCoRunners: totalPrevRaceEntries
+                  });
+                }
+              }
+            } catch (error) {
+              console.error('Error fetching race level data for raceId:', raceId, error);
+            }
+          }
 
           coRunnerStats.forEach(item => {
             const map = new Map<string, { nextFinish: number | null; nextRaceId?: string }>();
@@ -706,7 +746,10 @@ function HorseRacingTable() {
           const items = sortedEntries.map(h => {
             const m = perHorse.get(h.horseId) || { avg: null, used: 0, total: 0 };
             const prevId = (h.races?.[0]?.raceId) || '';
-            return { horseId: h.horseId, horseNo: h.horseNo, name: h.name, avgPlace: m.avg, used: m.used, total: m.total, prevRaceId: prevId };
+            // entryByHorseIdから馬名を取得し、取得できない場合はフォールバック
+            const entry = entryByHorseId.get(h.horseId);
+            const horseName = entry?.name || h.name || `馬${h.horseNo}`;
+            return { horseId: h.horseId, horseNo: h.horseNo, name: horseName, avgPlace: m.avg, used: m.used, total: m.total, prevRaceId: prevId };
           });
           const ranked = items
             .slice()
@@ -1037,6 +1080,218 @@ function HorseRacingTable() {
     return lap ? `${time} (${lap})` : time;
   };
 
+  const handleToggleCoRunners = async (entry: HorseEntry) => {
+    const horseId = entry.horseId;
+    const isCurrentlyExpanded = !!expandedCoRunnerMap[horseId];
+    const nextExpanded = !isCurrentlyExpanded;
+
+    setExpandedCoRunnerMap(prev => {
+      const next = { ...prev };
+      if (nextExpanded) {
+        next[horseId] = true;
+      } else {
+        delete next[horseId];
+      }
+      return next;
+    });
+
+    if (!nextExpanded) {
+      return;
+    }
+
+    const prevRace = entry.races?.[0];
+    if (!prevRace || !prevRace.raceId) {
+      setCoRunnerDetails(prev => ({
+        ...prev,
+        [horseId]: {
+          status: 'error',
+          error: '前走データがありません',
+        },
+      }));
+      return;
+    }
+
+    const cached = coRunnerRaceCache.current.get(prevRace.raceId);
+    if (cached) {
+      setCoRunnerDetails(prev => ({
+        ...prev,
+        [horseId]: {
+          status: 'loaded',
+          raceId: prevRace.raceId,
+          data: cached,
+        },
+      }));
+      return;
+    }
+
+    const currentDetail = coRunnerDetails[horseId];
+    if (currentDetail && currentDetail.status === 'loading') {
+      return;
+    }
+
+    setCoRunnerDetails(prev => ({
+      ...prev,
+      [horseId]: {
+        status: 'loading',
+        raceId: prevRace.raceId,
+      },
+    }));
+
+    try {
+      const admin = new AdminService();
+      const currentRaceDate = raceInfo?.date; // 現在のレースの日付を取得
+      const response = await admin.getCoRunnerNextResults(prevRace.raceId, currentRaceDate);
+
+      // 新しいAPIレスポンス形式に対応
+      const results = (response as any)?.nextResults || response || [];
+
+      const sorted = (Array.isArray(results) ? results : []).slice().sort((a, b) => {
+        const aPos = a.finishPosition ?? 9999;
+        const bPos = b.finishPosition ?? 9999;
+        if (aPos !== bPos) return aPos - bPos;
+        // 次走結果なので人気順ソートは削除
+        return 0;
+      });
+      coRunnerRaceCache.current.set(prevRace.raceId, sorted);
+      setCoRunnerDetails(prev => ({
+        ...prev,
+        [horseId]: {
+          status: 'loaded',
+          raceId: prevRace.raceId,
+          data: sorted,
+        },
+      }));
+    } catch (error) {
+      console.error('Error fetching co-runner results:', error);
+      setCoRunnerDetails(prev => ({
+        ...prev,
+        [horseId]: {
+          status: 'error',
+          raceId: prevRace.raceId,
+          error: '同走馬データの取得に失敗しました',
+        },
+      }));
+    }
+  };
+
+  const renderCoRunnerSection = (entry: HorseEntry) => {
+    const prevRace = entry.races?.[0];
+    if (!prevRace || !prevRace.raceId) {
+      return (
+        <Typography variant="body2" sx={{ color: '#64748b' }}>
+          前走データがありません。
+        </Typography>
+      );
+    }
+
+    const detail = coRunnerDetails[entry.horseId];
+    if (!detail || detail.status === 'loading') {
+      return (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <CircularProgress size={18} />
+          <Typography variant="body2" sx={{ color: '#475569' }}>
+            読み込み中...
+          </Typography>
+        </Box>
+      );
+    }
+
+    if (detail.status === 'error') {
+      return (
+        <Typography variant="body2" color="error">
+          {detail.error || '同走馬データの取得に失敗しました。'}
+        </Typography>
+      );
+    }
+
+    const rows = detail.data || [];
+    if (rows.length === 0) {
+      return (
+        <Typography variant="body2" sx={{ color: '#64748b' }}>
+          同走馬データがありません。
+        </Typography>
+      );
+    }
+
+    const raceLabel = formatRaceMeta(prevRace);
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Typography variant="caption" sx={{ color: '#475569', fontWeight: 600 }}>
+          前走同走馬の次走成績: {raceLabel}
+        </Typography>
+        <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 1 }}>
+          <Table size="small" sx={{ minWidth: 400, '& th, & td': { px: 1, py: 0.5, fontSize: '0.8rem' } }}>
+            <TableHead>
+              <TableRow>
+                <TableCell align="center" sx={{ width: 30, maxWidth: 30 }}>着</TableCell>
+                <TableCell sx={{ width: 70, maxWidth: 70 }}>馬名</TableCell>
+                <TableCell align="center" sx={{ width: 10, maxWidth: 10 }}>クラス</TableCell>
+                <TableCell align="center" sx={{ width: 60, maxWidth: 60 }}>着差</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.map((row) => {
+                const isSelf = row.horseId === entry.horseId;
+                const alsoRunning = !isSelf && currentRaceHorseIds.has(row.horseId);
+                const displayName = getResultHorseName(row);
+                const oddsLabel = row.odds ? `${row.odds.toFixed(1)}倍` : '-';
+                const popularityLabel = (typeof row.popularity === 'number' && row.popularity > 0)
+                  ? `${row.popularity}人気`
+                  : oddsLabel;
+                return (
+                  <TableRow
+                    key={`${row.raceId}-${row.horseId}`}
+                    sx={{
+                      bgcolor: isSelf
+                        ? 'rgba(59, 130, 246, 0.12)'
+                        : alsoRunning
+                          ? 'rgba(234, 179, 8, 0.12)'
+                          : undefined,
+                    }}
+                  >
+                    <TableCell align="center" sx={{ fontWeight: isSelf ? 700 : undefined }}>{row.finishPosition ?? '-'}</TableCell>
+                    <TableCell sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.75,
+                      fontWeight: isSelf ? 700 : 600,
+                      minWidth: 80
+                    }}>
+                      <span style={{
+                        flex: 1
+                      }}>{displayName}</span>
+                      {alsoRunning && (
+                        <Chip label="出走中" size="small" color="warning" sx={{ height: 18, fontSize: '0.65rem' }} />
+                      )}
+                    </TableCell>
+                    <TableCell align="center" sx={{ width: 60, maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(row as any).className || '-'}</TableCell>
+                    <TableCell align="center" sx={{ width: 60, maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.margin || '-'}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Box>
+    );
+  };
+
+  const toggleCoRunnerByHorseId = (horseId: string) => {
+    const entry = entryByHorseId.get(horseId);
+    if (entry) {
+      handleToggleCoRunners(entry);
+    }
+  };
+
+  const renderCoRunnerByHorseId = (horseId: string) => {
+    const entry = entryByHorseId.get(horseId);
+    if (!entry) {
+      return <Typography variant="body2" sx={{ color: '#64748b' }}>対象馬のデータがありません。</Typography>;
+    }
+    return renderCoRunnerSection(entry);
+  };
+
   const trainingRecordsWithinWindow = useMemo(() => {
     const now = Date.now();
     const result: Record<string, TrainingRecordResponse[]> = {};
@@ -1075,6 +1330,30 @@ function HorseRacingTable() {
     }
     return map;
   }, [entries]);
+
+  const currentRaceHorseIds = useMemo(() => new Set(entries.map(entry => entry.horseId)), [entries]);
+
+  const getResultHorseName = (result: RaceResultData): string => {
+    return (
+      (result as any).horseName ||
+      (result as any).horse?.name ||
+      (result as any).name ||
+      result.horseId
+    );
+  };
+
+  const formatRaceMeta = (race?: RaceDetail): string => {
+    if (!race) return '前走情報なし';
+    const dateLabel = formatTrainingDate(race.date ?? '') || '-';
+    const parts = [
+      dateLabel ? `${dateLabel}` : null,
+      race.track || null,
+      race.surface ? `${race.surface}` : null,
+      race.distance ? `${race.distance}m` : null,
+      race.class || null,
+    ].filter(Boolean);
+    return parts.join(' ');
+  };
 
   const top4fByType = useMemo(() => {
     const rankings: Record<'hill' | 'wood', TrainingRankingItem[]> = { hill: [], wood: [] };
@@ -1319,14 +1598,19 @@ function HorseRacingTable() {
   // ツールチップ廃止に伴いホバー用関数は未使用
 
   return (
-    <Box 
-      sx={{ 
-        pb: 4, maxWidth: '100%', mx: 'auto', px: 3,
-        position: 'relative', zIndex: 0,
-        // PCでサイドメニュー(persistent)が出ている間はその幅だけ余白を取り、
-        // 中央カラムと重ならないようにする
-        ml: (!isMobile && raceLevelOpen && !isUltraWide) ? { xs: 0, md: '380px' } : 0,
-        mr: (!isMobile && rankPanelOpen && !isUltraWide) ? { xs: 0, md: '380px' } : 0,
+    <RacePageLayout
+      onToggleCoRunners={toggleCoRunnerByHorseId}
+      expandedMap={expandedCoRunnerMap}
+      renderCoRunnerContent={renderCoRunnerByHorseId}
+    >
+      <Box
+        sx={{
+          pb: 4, maxWidth: '100%', mx: 'auto', px: 3,
+          position: 'relative', zIndex: 0,
+          // PCでサイドメニュー(persistent)が出ている間はその幅だけ余白を取り、
+          // 中央カラムと重ならないようにする
+          ml: (!isMobile && raceLevelOpen && !isUltraWide) ? { xs: 0, md: '380px' } : 0,
+          mr: (!isMobile && rankPanelOpen && !isUltraWide) ? { xs: 0, md: '380px' } : 0,
         transition: 'margin 200ms ease',
         '--rankw': { xs: '28px', sm: '32px' },
         '--framew': { xs: '44px', sm: '52px', md: '56px', lg: '56px', xl: '60px' },
@@ -1519,6 +1803,9 @@ function HorseRacingTable() {
           mode={rankMode}
           onModeChange={setRankMode}
           variant={isMobile ? 'temporary' : 'persistent'}
+          onToggleCoRunners={toggleCoRunnerByHorseId}
+          expandedMap={expandedCoRunnerMap}
+          renderCoRunnerContent={renderCoRunnerByHorseId}
         />
       )}
 
@@ -1528,6 +1815,9 @@ function HorseRacingTable() {
           open={raceLevelOpen}
           onClose={() => setRaceLevelOpen(false)}
           variant={isMobile ? 'temporary' : 'persistent'}
+          onToggleCoRunners={toggleCoRunnerByHorseId}
+          expandedMap={expandedCoRunnerMap}
+          renderCoRunnerContent={renderCoRunnerByHorseId}
         />
       )}
 
@@ -1721,7 +2011,7 @@ function HorseRacingTable() {
                       })()}
                     </div>
                     {/* 周り方別成績 */}
-                    <div className="horse-info__turn" style={{ visibility: 'visible', flexDirection: 'column', alignItems: 'flex-end' }}>
+                    <div className="horse-info__turn" style={{ visibility: 'visible' }}>
                       {(() => {
                         const stats = turnStatsMap.get(h.horseId);
                         const leftCounts = formatTurnCounts(stats?.left);
@@ -2281,7 +2571,8 @@ function HorseRacingTable() {
         currentSurface={raceInfo.surface}
         currentVenue={raceInfo.venue}
       />
-    </Box>
+      </Box>
+    </RacePageLayout>
   );
 }
 

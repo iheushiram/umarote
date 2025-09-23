@@ -81,7 +81,9 @@
 .horse-info__turn{
   margin-top: 2px;
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   color: var(--hi-muted);
   font-size: 12px;
 }

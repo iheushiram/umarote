@@ -1,20 +1,25 @@
 import React, { useState } from 'react'
-import { Box, Typography, Stack, Chip, ToggleButtonGroup, ToggleButton, Tooltip, Switch, FormControlLabel, ButtonBase } from '@mui/material'
+import { Box, Typography, Stack, Chip, ToggleButtonGroup, ToggleButton, Tooltip, Switch, FormControlLabel, ButtonBase, Collapse, Divider } from '@mui/material'
 import { useRaceLevelStore } from '../store/raceLevelStore'
 import type { RaceLevelRankItem } from '../store/raceLevelStore'
 import { useHorseFocusStore } from '../store/horseFocusStore'
 import '../styles/focus-highlight.css'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 
 function RaceLevelRankRow({
   item,
   displayMode,
   onFocus,
   isFocused,
+  onToggle,
+  isExpanded,
 }: {
   item: RaceLevelRankItem
   displayMode: 'detail' | 'names'
   onFocus: (horseId: string) => void
   isFocused: boolean
+  onToggle?: (horseId: string) => void
+  isExpanded?: boolean
 }) {
   return (
     <Tooltip
@@ -30,7 +35,10 @@ function RaceLevelRankRow({
     >
       <ButtonBase
         disableRipple
-        onClick={() => onFocus(item.horseId)}
+        onClick={() => {
+          onFocus(item.horseId)
+          onToggle?.(item.horseId)
+        }}
         className={isFocused ? 'rank-item-button rank-item-button--active' : 'rank-item-button'}
         sx={{
           width: '100%',
@@ -46,6 +54,9 @@ function RaceLevelRankRow({
           '&:hover': { backgroundColor: 'action.hover' },
         }}
       >
+        {onToggle && (
+          isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />
+        )}
         <Box sx={{ minWidth: 28, height: 22, display: 'inline-grid', placeItems: 'center', borderRadius: 0.5, bgcolor: item.rank === 1 ? '#fde68a' : item.rank === 2 ? '#e5e7eb' : item.rank === 3 ? '#fcd34d' : '#f3f4f6', border: '1px solid #e5e7eb', fontWeight: 800 }}>
           {item.rank}
         </Box>
@@ -68,7 +79,15 @@ function RaceLevelRankRow({
   )
 }
 
-export default function RaceLevelRankPanel() {
+export default function RaceLevelRankPanel({
+  onToggleCoRunners,
+  expandedMap,
+  renderCoRunnerContent,
+}: {
+  onToggleCoRunners?: (horseId: string) => void
+  expandedMap?: Record<string, boolean>
+  renderCoRunnerContent?: (horseId: string) => React.ReactNode
+} = {}) {
   const items = useRaceLevelStore(s => s.items)
   const [displayMode, setDisplayMode] = useState<'detail' | 'names'>('detail')
   const focus = useHorseFocusStore(state => state.focus)
@@ -102,13 +121,24 @@ export default function RaceLevelRankPanel() {
       ) : (
         <Stack spacing={0.5}>
           {items.map((item) => (
-            <RaceLevelRankRow
-              key={item.horseId}
-              item={item}
-              displayMode={displayMode}
-              onFocus={focus}
-              isFocused={focusedHorseId === item.horseId}
-            />
+            <Box key={item.horseId} sx={{ border: '1px solid #e5e7eb', borderRadius: 1, bgcolor: expandedMap?.[item.horseId] ? 'rgba(59,130,246,0.08)' : 'background.paper', transition: 'background-color 150ms ease' }}>
+              <RaceLevelRankRow
+                item={item}
+                displayMode={displayMode}
+                onFocus={focus}
+                isFocused={focusedHorseId === item.horseId}
+                onToggle={onToggleCoRunners}
+                isExpanded={!!expandedMap?.[item.horseId]}
+              />
+              {onToggleCoRunners && (
+                <Collapse in={!!expandedMap?.[item.horseId]} timeout="auto" unmountOnExit>
+                  <Divider sx={{ mx: 1 }} />
+                  <Box sx={{ px: 1.25, py: 1 }}>
+                    {renderCoRunnerContent?.(item.horseId)}
+                  </Box>
+                </Collapse>
+              )}
+            </Box>
           ))}
         </Stack>
       )}

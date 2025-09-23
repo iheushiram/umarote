@@ -7,7 +7,6 @@ import HorseRacingTable from './components/HorseRacingTable'
 import TopPage from './pages/TopPage'
 import RaceResultsPage from './pages/RaceResultsPage'
 import AdminPage from './pages/AdminPage'
-import RacePageLayout from './layouts/RacePageLayout'
 
 const queryClient = new QueryClient()
 const theme = createTheme()
@@ -20,7 +19,7 @@ function App() {
         <Router>
           <Routes>
             <Route path="/" element={<Container maxWidth="lg" sx={{ py: 4 }}><TopPage /></Container>} />
-            <Route path="/races/:raceId" element={<RacePageLayout><HorseRacingTable /></RacePageLayout>} />
+            <Route path="/races/:raceId" element={<HorseRacingTable />} />
             <Route path="/races/:raceId/results" element={<Container maxWidth="lg" sx={{ py: 4 }}><RaceResultsPage /></Container>} />
             <Route path="/horse/:id" element={<Container maxWidth="lg" sx={{ py: 4 }}><HorseDetail /></Container>} />
             <Route path="/horse/:id/results" element={<Container maxWidth="lg" sx={{ py: 4 }}><HorseResultsPage /></Container>} />

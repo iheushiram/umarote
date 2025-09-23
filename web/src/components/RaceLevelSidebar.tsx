@@ -5,7 +5,21 @@ import RaceLevelRankPanel from './RaceLevelRankPanel'
 
 type Variant = 'temporary' | 'persistent'
 
-export default function RaceLevelSidebar({ open, onClose, variant = 'temporary' }: { open: boolean; onClose: () => void; variant?: Variant }) {
+export default function RaceLevelSidebar({
+  open,
+  onClose,
+  variant = 'temporary',
+  onToggleCoRunners,
+  expandedMap,
+  renderCoRunnerContent,
+}: {
+  open: boolean
+  onClose: () => void
+  variant?: Variant
+  onToggleCoRunners?: (horseId: string) => void
+  expandedMap?: Record<string, boolean>
+  renderCoRunnerContent?: (horseId: string) => React.ReactNode
+}) {
   return (
     <Drawer
       anchor="left"
@@ -21,7 +35,11 @@ export default function RaceLevelSidebar({ open, onClose, variant = 'temporary' 
           </IconButton>
         </Box>
         <Box sx={{ flex: 1, overflow: 'auto' }}>
-          <RaceLevelRankPanel />
+          <RaceLevelRankPanel
+            onToggleCoRunners={onToggleCoRunners}
+            expandedMap={expandedMap}
+            renderCoRunnerContent={renderCoRunnerContent}
+          />
         </Box>
       </Box>
     </Drawer>
