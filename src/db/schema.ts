@@ -86,6 +86,7 @@ export const raceResults = sqliteTable('race_results', {
   averagePosition: real('average_position').notNull(),
   lastThreeFurlong: text('last_three_furlong').notNull(),
   averageThreeFurlong: text('average_three_furlong'),
+  minusThreeFurlongAvgSpeed: real('minus_three_furlong_avg_speed'),
   odds: real('odds').notNull(),
   popularity: integer('popularity').notNull(),
   // 賞金情報

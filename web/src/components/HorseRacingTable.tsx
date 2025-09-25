@@ -23,6 +23,8 @@ import {
   Switch,
   Alert,
   CircularProgress,
+  ToggleButton,
+  ToggleButtonGroup,
 } from "@mui/material";
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
@@ -80,6 +82,7 @@ function HorseRacingTable() {
   const [analysisSidebarOpen, setAnalysisSidebarOpen] = useState(false);
   const [hudOpen, setHudOpen] = useState(false);
   const [hudTab, setHudTab] = useState<'individual' | 'ranking'>('individual');
+  const [speedSummaryMode, setSpeedSummaryMode] = useState<'avg' | 'minus3f'>('avg');
   // 同日・同会場のレース一覧
   const [siblingRaces, setSiblingRaces] = useState<RaceData[]>([]);
   const [allRacesSameDate, setAllRacesSameDate] = useState<RaceData[]>([]);
@@ -89,15 +92,17 @@ function HorseRacingTable() {
   const [avgTimeCount, setAvgTimeCount] = useState<number>(0);
   const [prevAvgSpeed, setPrevAvgSpeed] = useState<number | null>(null);
   const [prevAvgSpeedCount, setPrevAvgSpeedCount] = useState<number>(0);
+  const [prevMinus3FAvgSpeed, setPrevMinus3FAvgSpeed] = useState<number | null>(null);
+  const [prevMinus3FAvgSpeedCount, setPrevMinus3FAvgSpeedCount] = useState<number>(0);
   const [showStickyStats, setShowStickyStats] = useState<boolean>(false);
   const headerSentinelRef = useRef<HTMLDivElement | null>(null);
   const stickyOffset = useMemo(() => {
     if (!showStickyStats) return 0;
-    const lines = (avgTimeSec !== null ? 1 : 0) + (prevAvgSpeed !== null ? 1 : 0);
+    const lines = (avgTimeSec !== null ? 1 : 0) + (prevAvgSpeed !== null ? 1 : 0) + (prevMinus3FAvgSpeed !== null ? 1 : 0);
     if (lines >= 2) return 64;
     if (lines === 1) return 40;
     return 0;
-  }, [showStickyStats, avgTimeSec, prevAvgSpeed]);
+  }, [showStickyStats, avgTimeSec, prevAvgSpeed, prevMinus3FAvgSpeed]);
 
   const nameColumnOverlayWidth = 'calc(var(--framew) + var(--horsenow) + var(--namew))';
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
@@ -309,6 +314,38 @@ function HorseRacingTable() {
 
     return [...items].sort((a, b) => b.speed - a.speed);
   }, [entries]);
+
+  const lastRaceMinus3FItems = useMemo(() => {
+    if (!entries || entries.length === 0) {
+      return [] as PrevRaceSpeedSummaryItem[];
+    }
+
+    const items: PrevRaceSpeedSummaryItem[] = [];
+    for (const entry of entries) {
+      const lastRace = entry.races?.[0];
+      const minus = lastRace?.minus3FAvgSpeed;
+      if (!lastRace || minus === undefined || minus === null) continue;
+      if (!isFinite(minus)) continue;
+
+      items.push({
+        horseId: entry.horseId,
+        horseNo: entry.horseNo,
+        name: entry.name,
+        speed: minus,
+        track: lastRace.track,
+        distance: lastRace.distance,
+        surface: lastRace.surface,
+        date: lastRace.date ?? undefined,
+        raceName: lastRace.class ?? undefined,
+      });
+    }
+
+    return items.sort((a, b) => b.speed - a.speed);
+  }, [entries]);
+
+  const speedSummaryItems = speedSummaryMode === 'avg' ? lastRaceSpeedItems : lastRaceMinus3FItems;
+  const speedSummaryTitle = speedSummaryMode === 'avg' ? '前走平均時速' : '前走-3F平均速度';
+  const canShowMinus3FSummary = lastRaceMinus3FItems.length > 0;
   // 前走同走馬の次走平均着順（レースレベル）: horseId -> { avg|null, used, total }
   const [prevRaceCohortAvgMap, setPrevRaceCohortAvgMap] = useState<Map<string, { avg: number | null; used: number; total: number }>>(new Map());
   // 前走レベルの前処理キャッシュ（prevRaceId単位）
@@ -612,7 +649,10 @@ function HorseRacingTable() {
               weightCarried: r.weight,
               margin: r.margin,
               isFeature: !!(r.raceName?.match(/G[1-3]|重賞|特別/)),
-              direction: r.direction
+              direction: r.direction,
+              minus3FAvgSpeed: (typeof r.minusThreeFurlongAvgSpeed === 'number' && isFinite(r.minusThreeFurlongAvgSpeed))
+                ? r.minusThreeFurlongAvgSpeed
+                : null
             };
           });
 
@@ -778,6 +818,8 @@ function HorseRacingTable() {
         try {
           let sum = 0;
           let cnt = 0;
+          let sumMinus = 0;
+          let cntMinus = 0;
           es.forEach((e) => {
             const recent = (resultsMap.get(e.horseId) || []);
             const r0 = recent[0];
@@ -788,13 +830,22 @@ function HorseRacingTable() {
                 cnt += 1;
               }
             }
+            const minus = (r0 as any)?.minusThreeFurlongAvgSpeed;
+            if (typeof minus === 'number' && isFinite(minus)) {
+              sumMinus += minus;
+              cntMinus += 1;
+            }
           });
           setPrevAvgSpeed(cnt > 0 ? Math.round((sum / cnt) * 10) / 10 : null);
           setPrevAvgSpeedCount(cnt);
+          setPrevMinus3FAvgSpeed(cntMinus > 0 ? Math.round((sumMinus / cntMinus) * 10) / 10 : null);
+          setPrevMinus3FAvgSpeedCount(cntMinus);
         } catch (e) {
           console.warn('前走平均時速の算出に失敗:', e);
           setPrevAvgSpeed(null);
           setPrevAvgSpeedCount(0);
+          setPrevMinus3FAvgSpeed(null);
+          setPrevMinus3FAvgSpeedCount(0);
         }
 
         // 現在レースの確定結果があればタブ表示用に取得
@@ -1819,6 +1870,11 @@ function HorseRacingTable() {
               前走平均時速(出走馬): {formatKmh(prevAvgSpeed)} km/h{prevAvgSpeedCount ? `（${prevAvgSpeedCount}頭）` : ''}
             </Typography>
           )}
+          {prevMinus3FAvgSpeed !== null && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+              前走-3F平均速度(出走馬): {formatKmh(prevMinus3FAvgSpeed)} km/h{prevMinus3FAvgSpeedCount ? `（${prevMinus3FAvgSpeedCount}頭）` : ''}
+            </Typography>
+          )}
         </Box>
       </Stack>
 
@@ -1944,16 +2000,43 @@ function HorseRacingTable() {
               前走平均時速(出走馬): {formatKmh(prevAvgSpeed)} km/h{prevAvgSpeedCount ? `（${prevAvgSpeedCount}頭）` : ''}
             </Typography>
           )}
+          {prevMinus3FAvgSpeed !== null && (
+            <Typography variant="body2" color="text.secondary">
+              前走-3F平均速度(出走馬): {formatKmh(prevMinus3FAvgSpeed)} km/h{prevMinus3FAvgSpeedCount ? `（${prevMinus3FAvgSpeedCount}頭）` : ''}
+            </Typography>
+          )}
         </Box>
       )}
 
-      {!loading && lastRaceSpeedItems.length > 0 && (
+      {!loading && (lastRaceSpeedItems.length > 0 || canShowMinus3FSummary) && (
         <Box sx={{ mt: 1.5, mb: hasResults ? 1.5 : 1 }}>
-          <PrevRaceSpeedSummary
-            items={lastRaceSpeedItems}
-            focusedHorseId={focusedHorseId}
-            onSelect={focusHorse}
-          />
+          <Stack direction="row" justifyContent="flex-end" sx={{ mb: 0.75 }}>
+            <ToggleButtonGroup
+              value={speedSummaryMode}
+              exclusive
+              size="small"
+              onChange={(_, value) => {
+                if (value) setSpeedSummaryMode(value);
+              }}
+            >
+              <ToggleButton value="avg">平均時速</ToggleButton>
+              <ToggleButton value="minus3f" disabled={!canShowMinus3FSummary}>
+                -3F平均速度
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Stack>
+          {speedSummaryItems.length > 0 ? (
+            <PrevRaceSpeedSummary
+              items={speedSummaryItems}
+              focusedHorseId={focusedHorseId}
+              onSelect={focusHorse}
+              title={speedSummaryTitle}
+            />
+          ) : (
+            <Typography variant="body2" color="text.secondary" sx={{ px: 0.5 }}>
+              -3F平均速度のデータがありません。
+            </Typography>
+          )}
         </Box>
       )}
 
@@ -2295,28 +2378,6 @@ function HorseRacingTable() {
                           })()}
                         </Box>
 
-                        {/* 前走同走馬の次走平均着順（このセルは前走のみ表示） */}
-                        {idx === 0 && (
-                          <Box>
-                            {(() => {
-                              const data = prevRaceCohortAvgMap.get(h.horseId);
-                              if (!data) {
-                                return (
-                                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                    同走次走平均: 算出中...
-                                  </Typography>
-                                );
-                              }
-                              const { avg, used, total } = data;
-                              return (
-                                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                                  同走次走平均: {avg !== null ? `${avg}位` : '-'}（{used}/{total}）
-                                </Typography>
-                              );
-                            })()}
-                          </Box>
-                        )}
-
                         {/* 出走情報・通過・上り・着差 */}
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
@@ -2330,6 +2391,11 @@ function HorseRacingTable() {
                           {!r.passing && r.last3F && (
                             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                               上り{r.last3F}
+                            </Typography>
+                          )}
+                          {typeof r.minus3FAvgSpeed === 'number' && isFinite(r.minus3FAvgSpeed) && (
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              -3F平均速度 {formatKmh(r.minus3FAvgSpeed)} km/h
                             </Typography>
                           )}
                           {r.margin && (

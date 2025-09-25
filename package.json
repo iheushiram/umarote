@@ -14,7 +14,9 @@
     "db:studio": "drizzle-kit studio",
     "db:create": "wrangler d1 create umarote-db",
     "db:execute": "wrangler d1 execute umarote-db --file=./src/db/migrations/0000_wise_lila_cheney.sql",
-    "db:local": "wrangler d1 execute umarote-db --local --file=./src/db/migrations/0000_wise_lila_cheney.sql"
+    "db:local": "wrangler d1 execute umarote-db --local --file=./src/db/migrations/0000_wise_lila_cheney.sql",
+    "test:run": "npx vitest run"
+  
   },
   "dependencies": {
     "drizzle-orm": "^0.44.4",

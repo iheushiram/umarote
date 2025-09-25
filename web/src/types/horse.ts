@@ -37,6 +37,7 @@ export interface RaceResult {
   averagePosition: number;
   lastThreeFurlong: string;
   averageThreeFurlong?: string; // Ave-3F
+  minusThreeFurlongAvgSpeed?: number | null; // -3F平均速度（km/h想定）
   odds: number;
   popularity: number;
 }
@@ -154,6 +155,7 @@ export interface RaceDetail {
   prizeMoney?: number; // 本賞金（万円）
   earnedMoney?: number; // 収得賞金（万円）
   direction?: '右' | '左';
+  minus3FAvgSpeed?: number | null; // -3F平均速度 (km/h)
 }
 
 // 馬柱用馬情報

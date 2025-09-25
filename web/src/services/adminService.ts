@@ -64,6 +64,7 @@ export interface RaceResultData {
   lastThreeFurlong: string;
   cornerPassings?: string; // ｺｰﾅｰ（通過順まとめ）
   averageThreeFurlong?: string; // Ave-3F
+  minusThreeFurlongAvgSpeed?: number | null; // -3F平均速度
   odds: number;
   popularity: number;
   pos2c?: number;

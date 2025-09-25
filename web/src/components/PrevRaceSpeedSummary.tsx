@@ -42,9 +42,10 @@ interface PrevRaceSpeedSummaryProps {
   items: PrevRaceSpeedSummaryItem[]
   focusedHorseId: string | null
   onSelect?: (horseId: string) => void
+  title?: string
 }
 
-export default function PrevRaceSpeedSummary({ items, focusedHorseId, onSelect }: PrevRaceSpeedSummaryProps) {
+export default function PrevRaceSpeedSummary({ items, focusedHorseId, onSelect, title = '前走平均時速' }: PrevRaceSpeedSummaryProps) {
   if (!items || items.length === 0) return null
 
   return (
@@ -62,7 +63,7 @@ export default function PrevRaceSpeedSummary({ items, focusedHorseId, onSelect }
       whiteSpace: 'nowrap',
     }}>
       <Typography variant="subtitle2" sx={{ fontWeight: 700, flex: '0 0 auto' }}>
-        前走平均時速
+        {title}
       </Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
         {items.map((item) => {

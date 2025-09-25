@@ -2,6 +2,18 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createDb } from './db/db';
 import { horses, races, raceResults, raceEntries, trackConditions, trainingRecords } from './db/schema';
+
+const SQLITE_VARIABLE_LIMIT = 999;
+const CHUNK_SIZE = 90; // safety margin for SQLite variable limit
+
+const chunkArray = <T>(arr: T[], size: number): T[][] => {
+  if (arr.length <= size) return [arr];
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+};
 import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
 import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry, NewTrainingRecord } from './db/schema';
 import { eq, sql, and, inArray, desc, lt, lte, gte, gt } from 'drizzle-orm';
@@ -362,6 +374,7 @@ app.get('/api/race-results', async (c) => {
     averagePosition: raceResults.averagePosition,
     lastThreeFurlong: raceResults.lastThreeFurlong,
     averageThreeFurlong: raceResults.averageThreeFurlong,
+    minusThreeFurlongAvgSpeed: raceResults.minusThreeFurlongAvgSpeed,
     odds: raceResults.odds,
     popularity: raceResults.popularity,
     createdAt: raceResults.createdAt,
@@ -393,13 +406,17 @@ app.post('/api/race-results', async (c) => {
     );
 
     if (targetRaceIds.length > 0) {
-      await db.delete(raceResults)
-        .where(inArray(raceResults.raceId, targetRaceIds));
-      await db.delete(raceEntries)
-        .where(and(
-          inArray(raceEntries.raceId, targetRaceIds as any),
-          eq(raceEntries.horseNo, 0)
-        ));
+      for (const chunk of chunkArray(targetRaceIds, CHUNK_SIZE)) {
+        await db.delete(raceResults)
+          .where(inArray(raceResults.raceId, chunk));
+      }
+      for (const chunk of chunkArray(targetRaceIds, CHUNK_SIZE)) {
+        await db.delete(raceEntries)
+          .where(and(
+            inArray(raceEntries.raceId, chunk as any),
+            eq(raceEntries.horseNo, 0)
+          ));
+      }
 
       for (const raceId of targetRaceIds) {
         const entries = await db.select({ id: raceEntries.id, horseId: raceEntries.horseId, horseNo: raceEntries.horseNo })
@@ -449,6 +466,7 @@ app.post('/api/race-results', async (c) => {
             averagePosition: resultData.averagePosition,
             lastThreeFurlong: resultData.lastThreeFurlong,
             averageThreeFurlong: (resultData as any).averageThreeFurlong,
+            minusThreeFurlongAvgSpeed: (resultData as any).minusThreeFurlongAvgSpeed,
             odds: resultData.odds,
             popularity: resultData.popularity,
             updatedAt: sql`CURRENT_TIMESTAMP`
@@ -577,13 +595,17 @@ app.post('/api/race-results-with-horses', async (c) => {
     );
 
     if (targetRaceIds.length > 0) {
-      await db.delete(raceResults)
-        .where(inArray(raceResults.raceId, targetRaceIds));
-      await db.delete(raceEntries)
-        .where(and(
-          inArray(raceEntries.raceId, targetRaceIds as any),
-          eq(raceEntries.horseNo, 0)
-        ));
+      for (const chunk of chunkArray(targetRaceIds, CHUNK_SIZE)) {
+        await db.delete(raceResults)
+          .where(inArray(raceResults.raceId, chunk));
+      }
+      for (const chunk of chunkArray(targetRaceIds, CHUNK_SIZE)) {
+        await db.delete(raceEntries)
+          .where(and(
+            inArray(raceEntries.raceId, chunk as any),
+            eq(raceEntries.horseNo, 0)
+          ));
+      }
 
       for (const raceId of targetRaceIds) {
         const entries = await db.select({ id: raceEntries.id, horseId: raceEntries.horseId, horseNo: raceEntries.horseNo })
@@ -775,6 +797,7 @@ app.post('/api/race-results-with-horses', async (c) => {
             averagePosition: resultData.averagePosition,
             lastThreeFurlong: resultData.lastThreeFurlong,
             averageThreeFurlong: (resultData as any).averageThreeFurlong,
+            minusThreeFurlongAvgSpeed: (resultData as any).minusThreeFurlongAvgSpeed,
             odds: resultData.odds,
             popularity: resultData.popularity,
             // 賞金情報

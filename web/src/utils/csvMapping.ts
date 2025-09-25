@@ -328,10 +328,21 @@ export function processJapaneseCsvRow(
   horseData: HorseDataFromCsv | null;
 } {
   const rowData: any = {};
+  const normalizeHeaderKey = (header: string) =>
+    header
+      .replace(/\s+/g, '')
+      .replace(/−/g, '-')
+      .replace(/－/g, '-')
+      .replace(/～/g, '〜');
   
   // Create mapping from headers to values
   headers.forEach((header, index) => {
-    rowData[header] = values[index] || '';
+    const value = values[index] || '';
+    rowData[header] = value;
+    const normalized = normalizeHeaderKey(header);
+    if (normalized !== header && !(normalized in rowData)) {
+      rowData[normalized] = value;
+    }
   });
   
   // 通過順フィールドのデバッグ情報
@@ -645,6 +656,20 @@ export function processJapaneseCsvRow(
       const ave = rowData['Ave-3F'] || rowData['AVE-3F'] || rowData['平均3F'] || '';
       const cleaned = ave.replace(/\s+/g, '');
       return cleaned || null;
+    })(),
+    minusThreeFurlongAvgSpeed: (() => {
+      const candidates = [
+        '-3F平均速度',
+        '-3F平均スピード',
+        '−3F平均速度',
+        '−3F平均スピード',
+        'マイナス3F平均速度',
+      ];
+      const raw = candidates.map(key => rowData[key]).find(v => v !== undefined && v !== null && String(v).trim() !== '');
+      if (!raw) return null;
+      const normalized = raw.toString().replace(/[^\d.\-]/g, '');
+      const num = parseFloat(normalized);
+      return Number.isFinite(num) ? num : null;
     })(),
     odds: odds || 0,
     popularity: (() => { const p = normalizeDigits(rowData['人気'] || ''); return p ? parseInt(p) : 0; })(),

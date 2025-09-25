@@ -1,0 +1,1 @@
+ALTER TABLE `race_results` ADD `minus_three_furlong_avg_speed` real;
