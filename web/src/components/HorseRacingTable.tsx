@@ -643,7 +643,7 @@ function HorseRacingTable() {
         // --- レースレベル（前走同走馬の次走平均着順）算出 ---
         try {
           const normalize = (s?: string) => (s || '').replace(/[^0-9]/g, '').slice(0, 8);
-          const calcDate = beforeDate ? normalize(beforeDate) : undefined;
+          const calcDate = beforeDate ? normalize(beforeDate) : normalize(raceInfo?.date); // beforeDate 未指定時も当日までに制限
           // horseId -> 前走の {raceId, date}
           const prev1ByHorse = new Map<string, { raceId: string; date?: string }>();
           es.forEach(e => {
@@ -654,18 +654,22 @@ function HorseRacingTable() {
           // 直近1走（「前走」）のユニークなレースID
           const prev1RaceIds = Array.from(new Set(Array.from(prev1ByHorse.values()).map(v => v.raceId)));
 
-          // 各レースIDに対して個別に新しいAPIを呼び出し
+          // 各レースIDに対して個別にAPIを呼び出し（当該レース日以前のみを対象）
           const coRunnerStats: any[] = [];
           for (const raceId of prev1RaceIds) {
             try {
-              const currentRaceDate = raceInfo?.date; // 現在のレースの日付を取得
-              const results = await admin.getCoRunnerNextResults(raceId, currentRaceDate);
+              const appliedBeforeDate = calcDate || undefined;
+              console.log('🔍 Average: raceInfo:', raceInfo);
+              console.log('🔍 Average: Fetching for raceId:', raceId, 'beforeDate:', appliedBeforeDate);
+              const results = await admin.getCoRunnerNextResults(raceId, calcDate || undefined); // 平均算出も当日以前で揃える
+              console.log('🔍 Average: Response for', raceId, ':', results);
 
               // 新しいAPIのレスポンス形式に合わせて変換
               if (results) {
                 // 新しいAPIレスポンス形式をチェック
                 const nextResults = (results as any).nextResults || results; // 後方互換性
                 const totalPrevRaceEntries = (results as any).totalPrevRaceEntries || (nextResults.length + 1);
+                console.log('🔍 Average: nextResults for', raceId, ':', nextResults, 'totalEntries:', totalPrevRaceEntries);
 
                 if (Array.isArray(nextResults) && nextResults.length > 0) {
                   const runners = nextResults.map((r: any) => ({
@@ -1140,10 +1144,14 @@ function HorseRacingTable() {
     try {
       const admin = new AdminService();
       const currentRaceDate = raceInfo?.date; // 現在のレースの日付を取得
+      console.log('🔍 Click: raceInfo:', raceInfo);
+      console.log('🔍 Click: Fetching for raceId:', prevRace.raceId, 'beforeDate:', currentRaceDate);
       const response = await admin.getCoRunnerNextResults(prevRace.raceId, currentRaceDate);
+      console.log('🔍 Click: Response:', response);
 
       // 新しいAPIレスポンス形式に対応
       const results = (response as any)?.nextResults || response || [];
+      console.log('🔍 Click: Extracted results:', results, 'length:', Array.isArray(results) ? results.length : 'not array');
 
       const sorted = (Array.isArray(results) ? results : []).slice().sort((a, b) => {
         const aPos = a.finishPosition ?? 9999;

@@ -19,6 +19,12 @@
 # まとめて消す
 `npx wrangler d1 execute umarote-db --local --command "DELETE FROM race_results;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM race_entries;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM races;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM horses;"`
 
+# APi test
+`npm run test:run`
+
+# front test
+`npm run test:run`
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

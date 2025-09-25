@@ -42,6 +42,38 @@ class SelectQuery {
     return this;
   }
 
+  leftJoin(table: any, condition: any) {
+    const joinRows = this.tableData.get(table) ?? [];
+    if (!condition || condition.type !== 'eq') {
+      return this;
+    }
+
+    const leftColumn = condition.column;
+    const rightColumn = typeof condition.value === 'string'
+      ? condition.value
+      : getColumnName(condition.value);
+
+    const nextRows: any[] = [];
+    this.rows.forEach((row) => {
+      const matches = joinRows.filter(joinRow => {
+        const leftValue = getColumnValue(row, leftColumn);
+        const rightValue = getColumnValue(joinRow, rightColumn);
+        return leftValue === rightValue;
+      });
+
+      if (matches.length === 0) {
+        nextRows.push({ ...row });
+      } else {
+        matches.forEach(match => {
+          nextRows.push({ ...row, ...match });
+        });
+      }
+    });
+
+    this.rows = nextRows;
+    return this;
+  }
+
   groupBy(column: any) {
     this.rows = groupRows(this.rows, column, this.selection);
     this.selection = null;
@@ -772,6 +804,33 @@ describe('Umarote API (mocked DB)', () => {
       expect(runner.nextRaceId).toBeNull();
       expect(runner.nextFinish).toBeNull();
     });
+  });
+
+  it('returns next results for co-runners via GET endpoint without beforeDate', async () => {
+    const res = await fetchWithEnv(`/api/co-runner-next-results/${PREV_RACE}`);
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+
+    expect(body.totalPrevRaceEntries).toBe(2);
+    expect(Array.isArray(body.nextResults)).toBe(true);
+    expect(body.nextResults).toHaveLength(2);
+
+    const h1 = body.nextResults.find((r: any) => r.horseId === HORSE_1);
+    const h2 = body.nextResults.find((r: any) => r.horseId === HORSE_2);
+    expect(h1?.raceId).toBe(MAIN_RACE);
+    expect(h1?.finishPosition).toBe(1);
+    expect(h2?.raceId).toBe(MAIN_RACE);
+    expect(h2?.finishPosition).toBe(2);
+  });
+
+  it('returns empty next results when beforeDate excludes subsequent races (GET endpoint)', async () => {
+    const res = await fetchWithEnv(`/api/co-runner-next-results/${PREV_RACE}?beforeDate=20250101`);
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+
+    expect(body.totalPrevRaceEntries).toBe(2);
+    expect(Array.isArray(body.nextResults)).toBe(true);
+    expect(body.nextResults).toHaveLength(0);
   });
 
   it('computes speed metrics for multiple horses', async () => {
