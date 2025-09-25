@@ -1042,23 +1042,31 @@ function HorseRacingTable() {
     if (location) parts.push(location);
 
     const snippets: string[] = [];
-    const fourF = record.time4f ?? record.time5f ?? record.time6f ?? null;
-    const threeF = record.time3f ?? null;
-    const twoF = record.time2f ?? null;
-    const oneF = record.time1f ?? null;
-    const formattedFourF = formatTimeValue(fourF);
-    const formattedThreeF = formatTimeValue(threeF);
-    const formattedTwoF = formatTimeValue(twoF);
-    const formattedOneF = formatTimeValue(oneF);
-    const lapFour = formatLapValue(record.lap4 ?? null);
-    const lapThree = formatLapValue(record.lap3 ?? null);
-    const lapTwo = formatLapValue(record.lap2 ?? null);
-    const lapOne = formatLapValue(record.lap1 ?? null);
+    const pushSegment = (label: string, timeValue: unknown, lapValue: unknown) => {
+      const formattedTime = formatTimeValue(extractNumber(timeValue));
+      if (!formattedTime) return;
+      const formattedLap = formatLapValue(extractNumber(lapValue));
+      snippets.push(`${label} ${formattedTime}${formattedLap ? ` (${formattedLap})` : ''}`);
+    };
 
-    if (formattedFourF) snippets.push(`4F ${formattedFourF}${lapFour ? ` (${lapFour})` : ''}`);
-    if (formattedThreeF) snippets.push(`3F ${formattedThreeF}${lapThree ? ` (${lapThree})` : ''}`);
-    if (formattedTwoF) snippets.push(`2F ${formattedTwoF}${lapTwo ? ` (${lapTwo})` : ''}`);
-    if (formattedOneF) snippets.push(`1F ${formattedOneF}${lapOne ? ` (${lapOne})` : ''}`);
+    const woodOrder: Array<[string, unknown, unknown]> = [
+      ['6F', record.time6f, record.lap6],
+      ['5F', record.time5f, record.lap5],
+      ['4F', record.time4f, record.lap4],
+      ['3F', record.time3f, record.lap3],
+      ['2F', record.time2f, record.lap2],
+      ['1F', record.time1f, record.lap1],
+    ];
+
+    const defaultOrder: Array<[string, unknown, unknown]> = [
+      ['4F', record.time4f ?? record.time5f ?? record.time6f, record.lap4],
+      ['3F', record.time3f, record.lap3],
+      ['2F', record.time2f, record.lap2],
+      ['1F', record.time1f, record.lap1],
+    ];
+
+    const segments = record.trainingType === 'wood' ? woodOrder : defaultOrder;
+    segments.forEach(([label, t, lap]) => pushSegment(label, t, lap));
     if (snippets.length > 0) parts.push(snippets.join(' / '));
 
     return parts.join(' ｜ ');
@@ -1318,10 +1326,10 @@ function HorseRacingTable() {
   }, [trainingMap]);
 
   const entriesWithTraining = useMemo(() => {
-    return entries
-      .map((entry) => ({ entry, records: trainingRecordsWithinWindow[entry.name] || [] }))
-      .filter((item) => item.records.length > 0);
+    return entries.map((entry) => ({ entry, records: trainingRecordsWithinWindow[entry.name] || [] }));
   }, [entries, trainingRecordsWithinWindow]);
+
+  const hasAnyTrainingData = useMemo(() => entriesWithTraining.some(item => item.records.length > 0), [entriesWithTraining]);
 
   const hudRowHeightMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -2448,7 +2456,7 @@ function HorseRacingTable() {
                   </Alert>
                 )}
                 {hudTab === 'individual' ? (
-                  entriesWithTraining.length > 0 ? (
+                  hasAnyTrainingData ? (
                     <Stack spacing={0}>
                       {entriesWithTraining.map(({ entry, records }) => (
                         <Box
@@ -2470,13 +2478,19 @@ function HorseRacingTable() {
                           <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', mb: 0.5 }}>
                             {entry.horseNo}-{entry.name}
                           </Typography>
-                          <Stack spacing={0.25}>
-                            {records.map((record) => (
-                              <Typography key={`${record.id}-hud`} variant="caption" sx={{ display: 'block', color: '#475569' }}>
-                                {record.trainingType === 'hill' ? '坂路' : 'ウッド'} ｜ {formatTrainingDisplay(record)}
-                              </Typography>
-                            ))}
-                          </Stack>
+                          {records.length > 0 ? (
+                            <Stack spacing={0.25}>
+                              {records.map((record) => (
+                                <Typography key={`${record.id}-hud`} variant="caption" sx={{ display: 'block', color: '#475569' }}>
+                                  {record.trainingType === 'hill' ? '坂路' : 'ウッド'} ｜ {formatTrainingDisplay(record)}
+                                </Typography>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                              調教データなし
+                            </Typography>
+                          )}
                         </Box>
                       ))}
                     </Stack>
