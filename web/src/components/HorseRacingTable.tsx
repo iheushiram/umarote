@@ -1072,6 +1072,50 @@ function HorseRacingTable() {
     return parts.join(' ｜ ');
   };
 
+  const renderTrainingRecordsTable = (records: TrainingRecordResponse[]) => {
+    return (
+      <Table size="small" sx={{ '& th': { fontSize: '0.75rem', py: 0.5, px: 0.75, whiteSpace: 'nowrap' }, '& td': { fontSize: '0.75rem', py: 0.5, px: 0.75, whiteSpace: 'nowrap' } }}>
+        <TableHead>
+          <TableRow>
+            <TableCell>日付</TableCell>
+            <TableCell>時刻</TableCell>
+            <TableCell>区分</TableCell>
+            <TableCell>コース</TableCell>
+            <TableCell align="center">6F</TableCell>
+            <TableCell align="center">5F</TableCell>
+            <TableCell align="center">4F</TableCell>
+            <TableCell align="center">3F</TableCell>
+            <TableCell align="center">2F</TableCell>
+            <TableCell align="center">1F</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {records.map((record) => {
+            const dateLabel = formatTrainingDate(record.trainingDate) || '-';
+            const weekday = record.weekday ? `(${record.weekday})` : '';
+            const timeLabel = formatTrainingTime(record.trainingTime) || '-';
+            const typeLabel = record.trainingType === 'hill' ? '坂路' : 'ウッド';
+            const courseLabel = [record.facility, record.course, record.turn].filter(Boolean).join(' ') || '-';
+            return (
+              <TableRow key={record.id}>
+                <TableCell>{`${dateLabel}${weekday}`.trim()}</TableCell>
+                <TableCell>{timeLabel}</TableCell>
+                <TableCell>{typeLabel}</TableCell>
+                <TableCell>{courseLabel}</TableCell>
+                <TableCell align="center">{formatSectionTime(record, 'time6f', 'lap6')}</TableCell>
+                <TableCell align="center">{formatSectionTime(record, 'time5f', 'lap5')}</TableCell>
+                <TableCell align="center">{formatSectionTime(record, 'time4f', 'lap4')}</TableCell>
+                <TableCell align="center">{formatSectionTime(record, 'time3f', 'lap3')}</TableCell>
+                <TableCell align="center">{formatSectionTime(record, 'time2f', 'lap2')}</TableCell>
+                <TableCell align="center">{formatSectionTime(record, 'time1f', 'lap1')}</TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    );
+  };
+
   const extractNumber = (value: unknown): number | null => {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string') {
@@ -2479,13 +2523,9 @@ function HorseRacingTable() {
                             {entry.horseNo}-{entry.name}
                           </Typography>
                           {records.length > 0 ? (
-                            <Stack spacing={0.25}>
-                              {records.map((record) => (
-                                <Typography key={`${record.id}-hud`} variant="caption" sx={{ display: 'block', color: '#475569' }}>
-                                  {record.trainingType === 'hill' ? '坂路' : 'ウッド'} ｜ {formatTrainingDisplay(record)}
-                                </Typography>
-                              ))}
-                            </Stack>
+                            <TableContainer sx={{ mt: 0.5, borderRadius: 1, border: '1px solid rgba(148, 163, 184, 0.35)', overflowX: 'auto' }}>
+                              {renderTrainingRecordsTable(records)}
+                            </TableContainer>
                           ) : (
                             <Typography variant="caption" sx={{ color: '#94a3b8' }}>
                               調教データなし
