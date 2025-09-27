@@ -6,9 +6,12 @@ import { useHorseFocusStore } from '../store/horseFocusStore'
 import '../styles/focus-highlight.css'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
+type MetricMode = 'place' | 'margin'
+
 function RaceLevelRankRow({
   item,
   displayMode,
+  metricMode,
   onFocus,
   isFocused,
   onToggle,
@@ -16,6 +19,7 @@ function RaceLevelRankRow({
 }: {
   item: RaceLevelRankItem
   displayMode: 'detail' | 'names'
+  metricMode: MetricMode
   onFocus: (horseId: string) => void
   isFocused: boolean
   onToggle?: (horseId: string) => void
@@ -65,8 +69,18 @@ function RaceLevelRankRow({
           <>
             <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</Typography>
             <Typography variant="caption" color="text.secondary">
-              {item.avgPlace !== null ? `平均 ${item.avgPlace}位` : '平均 -'}
-              {`（${item.used}/${item.total}）`}
+              {metricMode === 'margin'
+                ? item.avgMargin !== null
+                  ? `平均着差 ${item.avgMargin.toFixed(2)}`
+                  : '平均着差 -'
+                : item.avgPlace !== null
+                  ? `平均 ${item.avgPlace}位`
+                  : '平均 -'
+              }
+              {metricMode === 'margin'
+                ? `（${item.marginUsed}/${item.total}）`
+                : `（${item.used}/${item.total}）`
+              }
             </Typography>
           </>
         ) : (
@@ -90,6 +104,7 @@ export default function RaceLevelRankPanel({
 } = {}) {
   const items = useRaceLevelStore(s => s.items)
   const [displayMode, setDisplayMode] = useState<'detail' | 'names'>('detail')
+  const [metricMode, setMetricMode] = useState<MetricMode>('place')
   const focus = useHorseFocusStore(state => state.focus)
   const focusedHorseId = useHorseFocusStore(state => state.focusedHorseId)
 
@@ -98,23 +113,36 @@ export default function RaceLevelRankPanel({
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1, gap: 1, flexWrap: 'wrap' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5, gap: 1, flexWrap: 'wrap' }}>
         <Typography variant="h6" sx={{ fontWeight: 'bold' }}>{title}</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          <FormControlLabel
-            control={
-              <Switch
-                size="small"
-                checked={displayMode === 'names'}
-                onChange={(e) => setDisplayMode(e.target.checked ? 'names' : 'detail')}
-              />
-            }
-            label="名前のみ"
-          />
-        </Box>
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={displayMode === 'names'}
+              onChange={(e) => setDisplayMode(e.target.checked ? 'names' : 'detail')}
+            />
+          }
+          label="名前のみ"
+          sx={{ mr: 0 }}
+        />
       </Box>
 
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>{caption}</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{caption}</Typography>
+
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', mb: 1, mt: 0.75 }}>
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={metricMode === 'margin'}
+              onChange={(e) => setMetricMode(e.target.checked ? 'margin' : 'place')}
+            />
+          }
+          label="平均着差で表示"
+          sx={{ mr: 0 }}
+        />
+      </Box>
 
       {items.length === 0 ? (
         <Typography variant="body2" color="text.secondary">計算中またはデータなし</Typography>
@@ -125,6 +153,7 @@ export default function RaceLevelRankPanel({
               <RaceLevelRankRow
                 item={item}
                 displayMode={displayMode}
+                metricMode={metricMode}
                 onFocus={focus}
                 isFocused={focusedHorseId === item.horseId}
                 onToggle={onToggleCoRunners}

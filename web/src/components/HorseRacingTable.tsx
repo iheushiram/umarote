@@ -74,6 +74,104 @@ const isBeforeDate = (target: string | undefined, reference: string | undefined)
   return target < reference;
 };
 
+const normalizeDigitsAscii = (value: string): string => value.replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+
+const parseMarginToLength = (margin?: string | null): number | null => {
+  if (!margin) return null;
+  let raw = margin.trim();
+  if (!raw || raw === '-' || raw === '----') return null;
+
+  if (/同着/.test(raw)) return 0;
+
+  const map: Record<string, number> = {
+    'ハナ': 0.1,
+    '鼻': 0.1,
+    'アタマ': 0.2,
+    '頭': 0.2,
+    'クビ': 0.3,
+    '首': 0.3,
+    'タイム差なし': 0,
+    'タイム差無': 0,
+    '大差': 6,
+  };
+
+  if (map[raw] !== undefined) {
+    return map[raw];
+  }
+
+  raw = raw.replace(/差$/, '');
+  raw = raw.replace(/[()（）]/g, '');
+  raw = raw.replace(/[＋+]/g, ' ');
+  raw = raw.replace(/[・･]/g, ' ');
+  raw = raw.replace(/－/g, ' ');
+  raw = normalizeDigitsAscii(raw);
+  raw = raw.replace(/([0-9])\.([0-9]\/\d)/g, '$1 $2');
+  raw = raw.replace(/([0-9])\-([0-9]\/\d)/g, '$1 $2');
+  raw = raw.replace(/半馬身/g, '0.5');
+  raw = raw.replace(/馬身半/g, ' 0.5');
+  raw = raw.replace(/馬身/g, '');
+  raw = raw.replace(/ｺﾞ/, 'ゴ');
+  raw = raw.replace(/,/g, ' ');
+  raw = raw.trim();
+
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return map[raw] ?? null;
+  }
+
+  let total = 0;
+  let matched = false;
+
+  for (const token of tokens) {
+    if (map[token] !== undefined) {
+      total += map[token];
+      matched = true;
+      continue;
+    }
+
+    if (/^\d+(?:\.\d+)?$/.test(token)) {
+      total += parseFloat(token);
+      matched = true;
+      continue;
+    }
+
+    if (/^\d+\/\d+$/.test(token)) {
+      const [n, d] = token.split('/').map(Number);
+      if (d) {
+        total += n / d;
+        matched = true;
+      }
+      continue;
+    }
+  }
+
+  if (matched) {
+    return total;
+  }
+
+  return map[raw] ?? null;
+};
+
+const LAST_THREE_F_DISTANCE_M = 600;
+
+const parseLastThreeFToSeconds = (value?: string | null): number | null => {
+  if (!value) return null;
+  const normalized = normalizeDigitsAscii(String(value)).replace(/[^0-9:\.]/g, '').trim();
+  if (!normalized) return null;
+  let seconds: number;
+  if (normalized.includes(':')) {
+    const [mPart, sPart] = normalized.split(':');
+    const minutes = parseFloat(mPart);
+    const secValue = parseFloat(sPart);
+    if (!isFinite(minutes) || !isFinite(secValue)) return null;
+    seconds = minutes * 60 + secValue;
+  } else {
+    seconds = parseFloat(normalized);
+  }
+  if (!isFinite(seconds) || seconds <= 0) return null;
+  return seconds;
+};
+
 const calcAveragePrizeBeforeRace = (results: RaceResultData[], raceDate?: string): number => {
   if (!Array.isArray(results) || results.length === 0) return 0;
   const normalizedRaceDate = raceDate ? normalizeDateStr(raceDate) : undefined;
@@ -167,6 +265,8 @@ function HorseRacingTable() {
   const [selectedVenue, setSelectedVenue] = useState<string>("");
   const [avgTimeSec, setAvgTimeSec] = useState<number | null>(null);
   const [avgTimeCount, setAvgTimeCount] = useState<number>(0);
+  const [avgMinus3FSpeed, setAvgMinus3FSpeed] = useState<number | null>(null);
+  const [avgMinus3FCount, setAvgMinus3FCount] = useState<number>(0);
   const [prevAvgSpeed, setPrevAvgSpeed] = useState<number | null>(null);
   const [prevAvgSpeedCount, setPrevAvgSpeedCount] = useState<number>(0);
   const [prevMinus3FAvgSpeed, setPrevMinus3FAvgSpeed] = useState<number | null>(null);
@@ -424,12 +524,12 @@ function HorseRacingTable() {
   const speedSummaryTitle = speedSummaryMode === 'avg' ? '前走平均時速' : '前走-3F平均速度';
   const canShowMinus3FSummary = lastRaceMinus3FItems.length > 0;
   // 前走同走馬の次走平均着順（レースレベル）: horseId -> { avg|null, used, total }
-  const [prevRaceCohortAvgMap, setPrevRaceCohortAvgMap] = useState<Map<string, { avg: number | null; used: number; total: number }>>(new Map());
+  const [prevRaceCohortAvgMap, setPrevRaceCohortAvgMap] = useState<Map<string, { avg: number | null; avgMargin: number | null; used: number; total: number; marginUsed: number }>>(new Map());
   // 前走レベルの前処理キャッシュ（prevRaceId単位）
   type PrevRaceLevelStats = {
     prevRaceId: string;
     prevDate?: string; // YYYYMMDD
-    coRunners: Map<string, { nextFinish: number | null; nextRaceId?: string }>; // 同走馬ごとの最初の次走の着順
+    coRunners: Map<string, { nextFinish: number | null; marginLength: number | null; nextRaceId?: string }>; // 同走馬ごとの最初の次走の着順・着差
     totalCoRunners: number; // 対象馬を含む同走馬総数
   };
   const prevRaceLevelStatsCache = useRef<Map<string, PrevRaceLevelStats>>(new Map());
@@ -856,11 +956,12 @@ function HorseRacingTable() {
                 console.log('🔍 Average: nextResults for', raceId, ':', nextResults, 'totalEntries:', totalPrevRaceEntries);
 
                 if (Array.isArray(nextResults) && nextResults.length > 0) {
-                  const runners = nextResults.map((r: any) => ({
-                    horseId: r.horseId,
-                    nextFinish: r.finishPosition,
-                    nextRaceId: r.raceId
-                  }));
+                const runners = nextResults.map((r: any) => ({
+                  horseId: r.horseId,
+                  nextFinish: r.finishPosition,
+                  nextRaceId: r.raceId,
+                  marginLength: parseMarginToLength(r.margin ?? r.nextMargin ?? null),
+                }));
                   coRunnerStats.push({
                     raceId: raceId,
                     runners: runners,
@@ -885,6 +986,7 @@ function HorseRacingTable() {
             item.runners.forEach(r => {
               map.set(r.horseId, {
                 nextFinish: typeof r.nextFinish === 'number' && isFinite(r.nextFinish) && r.nextFinish > 0 ? r.nextFinish : null,
+                marginLength: typeof r.marginLength === 'number' && isFinite(r.marginLength) && r.marginLength >= 0 ? r.marginLength : null,
                 nextRaceId: r.nextRaceId ?? undefined,
               });
             });
@@ -917,27 +1019,43 @@ function HorseRacingTable() {
             if (!stats) return;
             const total = Math.max(0, stats.totalCoRunners - 1); // 自馬を除く
             let sum = 0; let used = 0;
+            let marginSum = 0; let marginUsed = 0;
             for (const [hid, st] of stats.coRunners.entries()) {
               if (hid === e.horseId) continue; // 自馬を除外
               if (typeof st.nextFinish === 'number' && isFinite(st.nextFinish) && st.nextFinish > 0) {
                 sum += st.nextFinish;
                 used += 1;
               }
+              if (st.marginLength !== null && st.marginLength !== undefined && isFinite(st.marginLength) && st.marginLength >= 0) {
+                marginSum += st.marginLength;
+                marginUsed += 1;
+              }
             }
             const avg = used > 0 ? Math.round((sum / used) * 10) / 10 : null;
-            perHorse.set(e.horseId, { avg, used, total });
+            const avgMargin = marginUsed > 0 ? Math.round((marginSum / marginUsed) * 100) / 100 : null;
+            perHorse.set(e.horseId, { avg, avgMargin, used, total, marginUsed });
           });
 
           setPrevRaceCohortAvgMap(perHorse);
 
           // ランキング項目生成（平均着順が小さいほど上位）。平均未算出(null)は末尾へ。
           const items = sortedEntries.map(h => {
-            const m = perHorse.get(h.horseId) || { avg: null, used: 0, total: 0 };
+            const m = perHorse.get(h.horseId) || { avg: null, avgMargin: null, used: 0, total: 0, marginUsed: 0 };
             const prevId = (h.races?.[0]?.raceId) || '';
             // entryByHorseIdから馬名を取得し、取得できない場合はフォールバック
             const entry = entryByHorseId.get(h.horseId);
             const horseName = entry?.name || h.name || `馬${h.horseNo}`;
-            return { horseId: h.horseId, horseNo: h.horseNo, name: horseName, avgPlace: m.avg, used: m.used, total: m.total, prevRaceId: prevId };
+            return {
+              horseId: h.horseId,
+              horseNo: h.horseNo,
+              name: horseName,
+              avgPlace: m.avg,
+              avgMargin: m.avgMargin ?? null,
+              used: m.used,
+              total: m.total,
+              marginUsed: m.marginUsed ?? 0,
+              prevRaceId: prevId,
+            };
           });
           const ranked = items
             .slice()
@@ -1072,6 +1190,8 @@ function HorseRacingTable() {
           const dateStr = (race?.date || '').replace(/-/g, '');
           const inferredClass = inferClassFromName(race?.raceName);
           const effectiveClassCond = inferredClass || race?.className;
+          setAvgMinus3FSpeed(null);
+          setAvgMinus3FCount(0);
           if (dateStr && dateStr.length >= 8 && effectiveClassCond && race?.distance && race?.surface) {
             const to = dateStr; // 当日を除外（lt）
             const fromDate = (() => {
@@ -1101,15 +1221,29 @@ function HorseRacingTable() {
             if (statsRes?.stats) {
               setAvgTimeSec(statsRes.stats.average || null);
               setAvgTimeCount(statsRes.stats.count || 0);
+              const results = Array.isArray((statsRes as any).results) ? (statsRes as any).results : [];
+              const last3fSeconds = results
+                .map((r: any) => parseLastThreeFToSeconds(r.lastThreeFurlong ?? r.last3f ?? r.lastThreeF ?? r.last_three_f ?? null))
+                .filter((sec: number | null): sec is number => sec !== null && isFinite(sec) && sec > 0);
+              if (last3fSeconds.length > 0) {
+                const avgLast3F = last3fSeconds.reduce((acc, cur) => acc + cur, 0) / last3fSeconds.length;
+                const speed = speedFromSeconds(LAST_THREE_F_DISTANCE_M, avgLast3F);
+                setAvgMinus3FSpeed(speed);
+                setAvgMinus3FCount(last3fSeconds.length);
+              }
             }
           } else {
             setAvgTimeSec(null);
             setAvgTimeCount(0);
+            setAvgMinus3FSpeed(null);
+            setAvgMinus3FCount(0);
           }
         } catch (e) {
           console.warn('平均タイム取得に失敗:', e);
           setAvgTimeSec(null);
           setAvgTimeCount(0);
+          setAvgMinus3FSpeed(null);
+          setAvgMinus3FCount(0);
         }
       } catch (err) {
         console.error(err);
@@ -2009,8 +2143,12 @@ function HorseRacingTable() {
               const has = avgTimeSec !== null && avgTimeCount > 0;
               const timePart = has ? formatSecondsToRace(avgTimeSec) : 'データなし';
               const countPart = has ? `（${avgTimeCount}件）` : '';
-              const speedPart = has ? ` ／ 平均時速: ${speedFromSeconds(raceInfo.distance, avgTimeSec) ?? '-'} km/h` : '';
-              return `平均タイム(過去1年・${cls} ${raceInfo.distance}m): ${timePart}${countPart}${speedPart}`;
+              const speedVal = has ? speedFromSeconds(raceInfo.distance, avgTimeSec) : null;
+              const speedPart = speedVal !== null ? ` ／ 平均時速: ${speedVal} km/h` : '';
+              const minus3FPart = avgMinus3FSpeed !== null
+                ? ` ／ -3F平均時速: ${avgMinus3FSpeed.toFixed(1)} km/h${avgMinus3FCount ? `（${avgMinus3FCount}件）` : ''}`
+                : '';
+              return `平均タイム(過去1年・${cls} ${raceInfo.distance}m): ${timePart}${countPart}${speedPart}${minus3FPart}`;
             })()}
           </Typography>
           {prevAvgSpeed !== null && (
@@ -2108,8 +2246,12 @@ function HorseRacingTable() {
                 const has = avgTimeSec !== null && avgTimeCount > 0;
                 const timePart = has ? formatSecondsToRace(avgTimeSec) : 'データなし';
                 const countPart = has ? `（${avgTimeCount}件）` : '';
-                const speedPart = has ? ` ／ 平均時速: ${speedFromSeconds(raceInfo.distance, avgTimeSec) ?? '-'} km/h` : '';
-                return `平均タイム(過去1年・${cls} ${raceInfo.distance}m): ${timePart}${countPart}${speedPart}`;
+                const speedVal = has ? speedFromSeconds(raceInfo.distance, avgTimeSec) : null;
+                const speedPart = speedVal !== null ? ` ／ 平均時速: ${speedVal} km/h` : '';
+                const minus3FPart = avgMinus3FSpeed !== null
+                  ? ` ／ -3F平均時速: ${avgMinus3FSpeed.toFixed(1)} km/h${avgMinus3FCount ? `（${avgMinus3FCount}件）` : ''}`
+                  : '';
+                return `平均タイム(過去1年・${cls} ${raceInfo.distance}m): ${timePart}${countPart}${speedPart}${minus3FPart}`;
               })()}
             </Typography>
             <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 'fit-content' }}>

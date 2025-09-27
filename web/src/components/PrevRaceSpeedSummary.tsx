@@ -87,14 +87,33 @@ export default function PrevRaceSpeedSummary({ items, focusedHorseId, onSelect, 
                   alignItems: 'flex-start',
                   justifyContent: 'flex-start',
                   flexDirection: 'column',
-                  gap: 0.1,
+                  gap: 0.25,
                   minWidth: 92,
                   maxWidth: 128,
                 }}
               >
-                <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {item.name}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%' }}>
+                  <Box
+                    component="span"
+                    sx={{
+                      display: 'inline-grid',
+                      placeItems: 'center',
+                      minWidth: 22,
+                      height: 18,
+                      px: 0.3,
+                      borderRadius: 0.75,
+                      bgcolor: 'rgba(30, 64, 175, 0.12)',
+                      color: 'rgba(30, 64, 175, 0.95)',
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {item.horseNo}
+                  </Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {item.name}
+                  </Typography>
+                </Box>
                 <Typography variant="caption" color="text.secondary">
                   {item.speed.toFixed(1)} km/h
                 </Typography>

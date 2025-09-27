@@ -467,7 +467,7 @@ export class AdminService {
     to?: string;   // YYYYMMDD (非含む)
     winnersOnly?: boolean;
     limit?: number;
-  }): Promise<{ stats: { count: number; average: number; fastest: number; slowest: number; median: number } } | null> {
+  }): Promise<{ stats: { count: number; average: number; fastest: number; slowest: number; median: number }; results?: any[] } | null> {
     try {
       const qs = new URLSearchParams();
       qs.set('distance', String(params.distance));
@@ -484,7 +484,7 @@ export class AdminService {
         throw new Error('距離別タイム統計の取得に失敗しました');
       }
       const data = await response.json();
-      return { stats: data.stats };
+      return data;
     } catch (error) {
       console.error('Error getting distance time stats:', error);
       return null;
