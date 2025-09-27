@@ -74,7 +74,9 @@ export default function PrevRankPanel() {
   const items = localMode === 'prev' ? itemsPrev : itemsPrev2
   const [displayMode, setDisplayMode] = useState<'detail' | 'names'>('detail')
   const title = localMode === 'prev' ? '前走レベルランキング' : '前前走レベルランキング'
-  const caption = localMode === 'prev' ? '指標: 前走レースの平均賞金（万円/頭）で降順' : '指標: 前前走レースの平均賞金（万円/頭）で降順'
+  const caption = localMode === 'prev'
+    ? '指標: 前走時点での参加馬平均獲得賞金（万円/頭）で降順'
+    : '指標: 前前走時点での参加馬平均獲得賞金（万円/頭）で降順'
 
   return (
     <Box>

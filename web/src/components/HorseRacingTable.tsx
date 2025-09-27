@@ -51,6 +51,8 @@ const TRAINING_RANKING_LIMIT = 15;
 const LEFT_TURN_TRACKS = new Set(['東京', '中京', '新潟']);
 const RIGHT_TURN_TRACKS = new Set(['札幌', '函館', '福島', '中山', '阪神', '京都', '小倉']);
 
+type TurnKey = 'left' | 'right';
+
 type TrainingRankingItem = {
   entry: HorseEntry;
   record: TrainingRecordResponse;
@@ -58,6 +60,81 @@ type TrainingRankingItem = {
 };
 
 import RacePageLayout from '../layouts/RacePageLayout';
+
+const normalizeDateStr = (value?: string | null): string | undefined => {
+  if (!value) return undefined;
+  const digits = value.replace(/[^0-9]/g, '');
+  if (digits.length < 8) return undefined;
+  return digits.slice(0, 8);
+};
+
+const isBeforeDate = (target: string | undefined, reference: string | undefined): boolean => {
+  if (!reference) return true;
+  if (!target) return false;
+  return target < reference;
+};
+
+const calcAveragePrizeBeforeRace = (results: RaceResultData[], raceDate?: string): number => {
+  if (!Array.isArray(results) || results.length === 0) return 0;
+  const normalizedRaceDate = raceDate ? normalizeDateStr(raceDate) : undefined;
+  let totalPrize = 0;
+  let startCount = 0;
+
+  results.forEach(res => {
+    const resultDate = normalizeDateStr(res.date);
+    if (!isBeforeDate(resultDate, normalizedRaceDate)) return;
+    startCount += 1;
+    const prize = typeof res.prizeMoney === 'number' && isFinite(res.prizeMoney) ? res.prizeMoney : 0;
+    totalPrize += prize;
+  });
+
+  if (startCount === 0) return 0;
+  return totalPrize / startCount;
+};
+
+const normalizeTrackLabel = (value?: string | null): string => {
+  if (!value) return '';
+  return value
+    .replace(/[（(].*?[)）]/g, '')
+    .replace(/[・]/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+};
+
+const inferTurnKeyFromName = (value?: string | null): TurnKey | null => {
+  const normalized = normalizeTrackLabel(value);
+  if (!normalized) return null;
+  for (const label of LEFT_TURN_TRACKS) {
+    if (normalized.includes(label)) return 'left';
+  }
+  for (const label of RIGHT_TURN_TRACKS) {
+    if (normalized.includes(label)) return 'right';
+  }
+  return null;
+};
+
+const renderWeekdayHighlight = (weekday?: string | null) => {
+  if (!weekday) return null;
+  const chars = Array.from(weekday);
+  return (
+    <Box component="span" sx={{ ml: 0.25 }}>
+      (
+      {chars.map((char, idx) => {
+        const color = char === '土' ? '#2563eb' : char === '日' ? '#dc2626' : undefined;
+        return (
+          <Box
+            component="span"
+            key={`${char}-${idx}`}
+            sx={color ? { color, fontWeight: 600 } : undefined}
+          >
+            {char}
+          </Box>
+        );
+      })}
+      )
+    </Box>
+  );
+};
 
 function HorseRacingTable() {
   const theme = useTheme();
@@ -371,6 +448,13 @@ function HorseRacingTable() {
   };
   const [prizeMoneyCache, setPrizeMoneyCache] = useState<Map<string, RaceLevelInfo>>(new Map());
   const [loadingPrizeMoney, setLoadingPrizeMoney] = useState<Set<string>>(new Set());
+  type PreRaceLevelInfo = {
+    avg: number | null;      // レース参加馬の前走以前平均賞金（万円/頭）
+    used: number;            // 集計に利用した頭数
+    total: number;           // レース頭数
+  };
+  const [preRaceLevelCache, setPreRaceLevelCache] = useState<Map<string, PreRaceLevelInfo>>(new Map());
+  const [loadingPreRaceLevel, setLoadingPreRaceLevel] = useState<Set<string>>(new Set());
   // レース時速（前走平均/実測平均）キャッシュ
   type RaceSpeedInfo = {
     prevAvg?: number;
@@ -490,6 +574,56 @@ function HorseRacingTable() {
     }
   };
 
+  const fetchPreRaceLevelInfo = async (targetRaceId: string, raceDate?: string) => {
+    if (!targetRaceId) return;
+    if (preRaceLevelCache.has(targetRaceId)) return;
+    if (loadingPreRaceLevel.has(targetRaceId)) return;
+
+    setLoadingPreRaceLevel(prev => {
+      const next = new Set(prev);
+      next.add(targetRaceId);
+      return next;
+    });
+
+    try {
+      const admin = new AdminService();
+      const beforeDate = raceDate ? normalizeDateStr(raceDate) : undefined;
+      const response = await admin.getRaceEntriesWithHistory(targetRaceId, {
+        limit: 100,
+        beforeDate,
+      });
+      const entries = Array.isArray(response.entries) ? response.entries : [];
+      const effectiveRaceDate = beforeDate || normalizeDateStr(response.raceDate || undefined);
+      const perHorseAvgs = entries.map(entry => {
+        const history = Array.isArray(entry.recentResults) ? entry.recentResults : [];
+        return calcAveragePrizeBeforeRace(history, effectiveRaceDate);
+      });
+      const total = entries.length;
+      const sum = perHorseAvgs.reduce((acc, val) => acc + (isFinite(val) ? val : 0), 0);
+      const avg = total > 0 ? Math.round((sum / total) * 10) / 10 : null;
+
+      setPreRaceLevelCache(prev => {
+        const next = new Map(prev);
+        next.set(targetRaceId, { avg, used: total, total });
+        return next;
+      });
+    } catch (error) {
+      console.warn('前走レベル情報の取得に失敗:', targetRaceId, error);
+      setPreRaceLevelCache(prev => {
+        if (prev.has(targetRaceId)) return prev;
+        const next = new Map(prev);
+        next.set(targetRaceId, { avg: null, used: 0, total: 0 });
+        return next;
+      });
+    } finally {
+      setLoadingPreRaceLevel(prev => {
+        const next = new Set(prev);
+        next.delete(targetRaceId);
+        return next;
+      });
+    }
+  };
+
   // レースの前走平均時速／実測平均時速を算出しキャッシュ
   const fetchRaceSpeedMetricsBatch = async (raceIds: string[]) => {
     const idsToFetch = raceIds.filter((rid) => {
@@ -595,11 +729,21 @@ function HorseRacingTable() {
         );
 
         // 前走のユニークなレースIDを収集
-        const prevRaceIds = Array.from(
-          new Set<string>(
-            es.flatMap(e => (resultsMap.get(e.horseId) || []).map(r => r.raceId))
-          )
-        );
+        const prevRaceDateMap = new Map<string, string>();
+        const prevRaceIdSet = new Set<string>();
+        es.forEach(e => {
+          const recentList = resultsMap.get(e.horseId) || [];
+          recentList.forEach(r => {
+            if (!r?.raceId) return;
+            prevRaceIdSet.add(r.raceId);
+            const normalized = normalizeDateStr(r.date);
+            if (normalized && !prevRaceDateMap.has(r.raceId)) {
+              prevRaceDateMap.set(r.raceId, normalized);
+            }
+          });
+        });
+
+        const prevRaceIds = Array.from(prevRaceIdSet);
 
         // 頭数を一括取得（races.fieldSize → race_results件数 → race_entries件数 の順でフォールバック）
         let basicsMap = new Map<string, RaceBasicInfo>();
@@ -906,6 +1050,14 @@ function HorseRacingTable() {
           }
         })();
 
+        (async () => {
+          const chunkSize = 4;
+          for (let i = 0; i < prevRaceIds.length; i += chunkSize) {
+            const chunk = prevRaceIds.slice(i, i + chunkSize);
+            await Promise.all(chunk.map(rid => fetchPreRaceLevelInfo(rid, prevRaceDateMap.get(rid))));
+          }
+        })();
+
         // 追加: 前走レースの前走平均時速・実測平均時速を一括取得
         (async () => {
           const chunkSize = 12;
@@ -1143,13 +1295,16 @@ function HorseRacingTable() {
         <TableBody>
           {records.map((record) => {
             const dateLabel = formatTrainingDate(record.trainingDate) || '-';
-            const weekday = record.weekday ? `(${record.weekday})` : '';
+            const weekdayNode = renderWeekdayHighlight(record.weekday);
             const timeLabel = formatTrainingTime(record.trainingTime) || '-';
             const typeLabel = record.trainingType === 'hill' ? '坂路' : 'ウッド';
             const courseLabel = [record.facility, record.course, record.turn].filter(Boolean).join(' ') || '-';
             return (
               <TableRow key={record.id}>
-                <TableCell>{`${dateLabel}${weekday}`.trim()}</TableCell>
+                <TableCell>
+                  <Box component="span">{dateLabel}</Box>
+                  {weekdayNode}
+                </TableCell>
                 <TableCell>{timeLabel}</TableCell>
                 <TableCell>{typeLabel}</TableCell>
                 <TableCell>{courseLabel}</TableCell>
@@ -1562,35 +1717,35 @@ function HorseRacingTable() {
     );
   };
 
-  // 前走レベル（平均賞金/頭）ランキング（テーブル外に表示）
+  // 前走レベル（前走以前の平均賞金/頭ベース）ランキング（テーブル外に表示）
   type PrevRankItem = { rank: number; horseId: string; horseNo: number; name: string; avg: number; raceId: string; margin?: string };
   const prevRankList: PrevRankItem[] = useMemo(() => {
     if (!entries || entries.length === 0) return [];
     const items = entries.map((h) => {
       const prev = h.races?.[0];
       if (!prev) return null;
-      const info = prizeMoneyCache.get(prev.raceId);
-      const avg = info?.avgPrize;
-      if (typeof avg !== 'number') return null;
+      const info = preRaceLevelCache.get(prev.raceId);
+      const avg = info?.avg;
+      if (typeof avg !== 'number' || !isFinite(avg)) return null;
       return { horseId: h.horseId, horseNo: h.horseNo, name: h.name, avg, raceId: prev.raceId, margin: prev.margin || undefined };
     }).filter(Boolean) as {horseId: string; horseNo: number; name: string; avg: number; raceId: string; margin?: string}[];
     items.sort((a, b) => b.avg - a.avg);
     return items.map((it, idx) => ({ ...it, rank: idx + 1 }));
-  }, [entries, prizeMoneyCache]);
+  }, [entries, preRaceLevelCache]);
 
   const prev2RankList: PrevRankItem[] = useMemo(() => {
     if (!entries || entries.length === 0) return [];
     const items = entries.map((h) => {
       const prev2 = h.races?.[1];
       if (!prev2) return null;
-      const info = prizeMoneyCache.get(prev2.raceId);
-      const avg = info?.avgPrize;
-      if (typeof avg !== 'number') return null;
+      const info = preRaceLevelCache.get(prev2.raceId);
+      const avg = info?.avg;
+      if (typeof avg !== 'number' || !isFinite(avg)) return null;
       return { horseId: h.horseId, horseNo: h.horseNo, name: h.name, avg, raceId: prev2.raceId, margin: prev2.margin || undefined };
     }).filter(Boolean) as {horseId: string; horseNo: number; name: string; avg: number; raceId: string; margin?: string}[];
     items.sort((a, b) => b.avg - a.avg);
     return items.map((it, idx) => ({ ...it, rank: idx + 1 }));
-  }, [entries, prizeMoneyCache]);
+  }, [entries, preRaceLevelCache]);
 
   // 右サイド用ストアに反映（PC常時表示用）
   useEffect(() => {
@@ -1634,14 +1789,10 @@ function HorseRacingTable() {
     };
 
     const detectTurnKey = (race: RaceDetail): TurnKey | null => {
-      const dir = race.direction;
-      if (dir === '左') return 'left';
-      if (dir === '右') return 'right';
-      const track = race.track?.trim();
-      if (!track) return null;
-      if (LEFT_TURN_TRACKS.has(track)) return 'left';
-      if (RIGHT_TURN_TRACKS.has(track)) return 'right';
-      return null;
+      const dir = race.direction?.trim();
+      if (dir?.includes('左')) return 'left';
+      if (dir?.includes('右')) return 'right';
+      return inferTurnKeyFromName(race.track);
     };
 
     for (const entry of entries) {
@@ -1663,13 +1814,10 @@ function HorseRacingTable() {
   }, [entries]);
 
   const raceTurnKey: TurnKey | null = useMemo(() => {
-    const direction = raceInfo.direction;
-    if (direction === '左') return 'left';
-    if (direction === '右') return 'right';
-    const venue = raceInfo.venue?.trim();
-    if (venue && LEFT_TURN_TRACKS.has(venue)) return 'left';
-    if (venue && RIGHT_TURN_TRACKS.has(venue)) return 'right';
-    return null;
+    const direction = raceInfo.direction?.trim();
+    if (direction?.includes('左')) return 'left';
+    if (direction?.includes('右')) return 'right';
+    return inferTurnKeyFromName(raceInfo.venue);
   }, [raceInfo.direction, raceInfo.venue]);
 
   const venueStatsMap = useMemo(() => {

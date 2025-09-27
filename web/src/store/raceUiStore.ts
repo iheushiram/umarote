@@ -5,7 +5,7 @@ export type PrevRankItem = {
   horseId: string
   horseNo: number
   name: string
-  avg: number
+  avg: number // 前走時点の参加馬平均獲得賞金（万円/頭）
   raceId: string
   margin?: string
 }
@@ -29,4 +29,3 @@ export const useRaceUiStore = create<RaceUiStore>((set) => ({
   setMode: (m) => set({ mode: m }),
   reset: () => set({ itemsPrev: [], itemsPrev2: [], mode: 'prev' })
 }))
-
