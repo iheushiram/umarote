@@ -982,7 +982,7 @@ function HorseRacingTable() {
           }
 
           coRunnerStats.forEach(item => {
-            const map = new Map<string, { nextFinish: number | null; nextRaceId?: string }>();
+            const map = new Map<string, { nextFinish: number | null; marginLength: number | null; nextRaceId?: string }>();
             item.runners.forEach(r => {
               map.set(r.horseId, {
                 nextFinish: typeof r.nextFinish === 'number' && isFinite(r.nextFinish) && r.nextFinish > 0 ? r.nextFinish : null,
@@ -1011,7 +1011,7 @@ function HorseRacingTable() {
           });
 
           // 馬ごとの平均値を算出
-          const perHorse = new Map<string, { avg: number | null; used: number; total: number }>();
+          const perHorse = new Map<string, { avg: number | null; avgMargin: number | null; used: number; total: number; marginUsed: number }>();
           es.forEach(e => {
             const p = prev1ByHorse.get(e.horseId);
             if (!p) return;
@@ -1574,6 +1574,10 @@ function HorseRacingTable() {
     }
   };
 
+  const collapseAllCoRunners = useCallback(() => {
+    setExpandedCoRunnerMap({});
+  }, []);
+
   const renderCoRunnerSection = (entry: HorseEntry) => {
     const prevRace = entry.races?.[0];
     if (!prevRace || !prevRace.raceId) {
@@ -1995,6 +1999,7 @@ function HorseRacingTable() {
       onToggleCoRunners={toggleCoRunnerByHorseId}
       expandedMap={expandedCoRunnerMap}
       renderCoRunnerContent={renderCoRunnerByHorseId}
+      onCollapseAllCoRunners={collapseAllCoRunners}
     >
       <Box
         sx={{
@@ -2220,6 +2225,7 @@ function HorseRacingTable() {
           onToggleCoRunners={toggleCoRunnerByHorseId}
           expandedMap={expandedCoRunnerMap}
           renderCoRunnerContent={renderCoRunnerByHorseId}
+          onCollapseAll={collapseAllCoRunners}
         />
       )}
 
@@ -2994,4 +3000,4 @@ function HorseRacingTable() {
   );
 }
 
-export default HorseRacingTable
+export default HorseRacingTable;

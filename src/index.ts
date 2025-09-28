@@ -1484,29 +1484,21 @@ app.get('/api/races/:raceId/entries-with-history', async (c) => {
 
     let recentResultsMap = new Map<string, any[]>();
     if (horseIds.length > 0) {
-      const condition = effectiveBeforeDate
-        ? and(
-            inArray(raceResults.horseId, horseIds as any),
-            lt(raceResults.date, effectiveBeforeDate)
-          )
-        : inArray(raceResults.horseId, horseIds as any);
-
-      const maxRows = limit * horseIds.length;
-      const rows = await db.select().from(raceResults)
-        .where(condition)
-        .orderBy(raceResults.horseId, desc(raceResults.date), raceResults.popularity)
-        .limit(maxRows);
-
-      recentResultsMap = rows.reduce((map, row) => {
-        const key = row.horseId;
-        if (!key) return map;
-        const arr = map.get(key) ?? [];
-        if (arr.length < limit) {
-          arr.push(row);
-          map.set(key, arr);
-        }
-        return map;
-      }, new Map<string, any[]>());
+      const entriesWithHistory = await Promise.all(
+        horseIds.map(async (horseId) => {
+          const conditions = [eq(raceResults.horseId, horseId)];
+          if (effectiveBeforeDate) {
+            conditions.push(lt(raceResults.date, effectiveBeforeDate));
+          }
+          const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
+          const rows = await db.select().from(raceResults)
+            .where(whereClause)
+            .orderBy(desc(raceResults.date), raceResults.popularity)
+            .limit(limit);
+          return [horseId, rows] as const;
+        })
+      );
+      recentResultsMap = new Map(entriesWithHistory);
     }
 
     const enriched = entries.map(entry => {

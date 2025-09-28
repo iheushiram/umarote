@@ -7,12 +7,14 @@ export default function RacePageLayout({
   children,
   onToggleCoRunners,
   expandedMap,
-  renderCoRunnerContent
+  renderCoRunnerContent,
+  onCollapseAllCoRunners
 }: {
   children: React.ReactNode
   onToggleCoRunners?: (horseId: string) => void
   expandedMap?: Record<string, boolean>
   renderCoRunnerContent?: (horseId: string) => React.ReactNode
+  onCollapseAllCoRunners?: () => void
 }) {
   return (
     <Box sx={{
@@ -37,6 +39,7 @@ export default function RacePageLayout({
             onToggleCoRunners={onToggleCoRunners}
             expandedMap={expandedMap}
             renderCoRunnerContent={renderCoRunnerContent}
+            onCollapseAll={onCollapseAllCoRunners}
           />
         </Paper>
       </Box>

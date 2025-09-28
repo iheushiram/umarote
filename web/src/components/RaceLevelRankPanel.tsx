@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Box, Typography, Stack, Chip, ToggleButtonGroup, ToggleButton, Tooltip, Switch, FormControlLabel, ButtonBase, Collapse, Divider } from '@mui/material'
+import { Box, Typography, Stack, Chip, ToggleButtonGroup, ToggleButton, Tooltip, Switch, FormControlLabel, ButtonBase, Collapse, Divider, Button } from '@mui/material'
 import { useRaceLevelStore } from '../store/raceLevelStore'
 import type { RaceLevelRankItem } from '../store/raceLevelStore'
 import { useHorseFocusStore } from '../store/horseFocusStore'
@@ -97,10 +97,12 @@ export default function RaceLevelRankPanel({
   onToggleCoRunners,
   expandedMap,
   renderCoRunnerContent,
+  onCollapseAll,
 }: {
   onToggleCoRunners?: (horseId: string) => void
   expandedMap?: Record<string, boolean>
   renderCoRunnerContent?: (horseId: string) => React.ReactNode
+  onCollapseAll?: () => void
 } = {}) {
   const items = useRaceLevelStore(s => s.items)
   const [displayMode, setDisplayMode] = useState<'detail' | 'names'>('detail')
@@ -115,17 +117,24 @@ export default function RaceLevelRankPanel({
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5, gap: 1, flexWrap: 'wrap' }}>
         <Typography variant="h6" sx={{ fontWeight: 'bold' }}>{title}</Typography>
-        <FormControlLabel
-          control={
-            <Switch
-              size="small"
-              checked={displayMode === 'names'}
-              onChange={(e) => setDisplayMode(e.target.checked ? 'names' : 'detail')}
-            />
-          }
-          label="名前のみ"
-          sx={{ mr: 0 }}
-        />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {onCollapseAll && expandedMap && Object.values(expandedMap).some(Boolean) && (
+            <Button size="small" variant="text" onClick={onCollapseAll} sx={{ textTransform: 'none', fontSize: '0.8rem', px: 1 }}>
+              すべて閉じる
+            </Button>
+          )}
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={displayMode === 'names'}
+                onChange={(e) => setDisplayMode(e.target.checked ? 'names' : 'detail')}
+              />
+            }
+            label="名前のみ"
+            sx={{ mr: 0 }}
+          />
+        </Box>
       </Box>
 
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{caption}</Typography>

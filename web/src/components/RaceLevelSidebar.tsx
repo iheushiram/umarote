@@ -12,6 +12,7 @@ export default function RaceLevelSidebar({
   onToggleCoRunners,
   expandedMap,
   renderCoRunnerContent,
+  onCollapseAll,
 }: {
   open: boolean
   onClose: () => void
@@ -19,6 +20,7 @@ export default function RaceLevelSidebar({
   onToggleCoRunners?: (horseId: string) => void
   expandedMap?: Record<string, boolean>
   renderCoRunnerContent?: (horseId: string) => React.ReactNode
+  onCollapseAll?: () => void
 }) {
   return (
     <Drawer
@@ -39,6 +41,7 @@ export default function RaceLevelSidebar({
             onToggleCoRunners={onToggleCoRunners}
             expandedMap={expandedMap}
             renderCoRunnerContent={renderCoRunnerContent}
+            onCollapseAll={onCollapseAll}
           />
         </Box>
       </Box>
