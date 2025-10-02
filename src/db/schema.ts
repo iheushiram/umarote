@@ -182,6 +182,27 @@ export type NewRaceEntry = typeof raceEntries.$inferInsert;
 export type TrackConditionDetail = typeof trackConditionDetails.$inferSelect;
 export type NewTrackConditionDetail = typeof trackConditionDetails.$inferInsert;
 
+// 日次馬場測定値テーブル（芝・ダート含水率とクッション値のサマリー）
+export const trackConditionDailySummaries = sqliteTable('track_condition_daily_summaries', {
+  id: text('id').primaryKey(),
+  venue: text('venue').notNull(), // 例：小倉競馬場
+  meetingLabel: text('meeting_label').notNull(), // 例：第1回（原文保持）
+  meetingNumber: integer('meeting_number'), // 例：1（必要に応じて数値化）
+  measurementDate: text('measurement_date').notNull(), // YYYY-MM-DD
+  dayOfWeek: text('day_of_week'), // 例：金
+  turfGoalPercent: real('turf_goal_percent'),
+  turfCornerPercent: real('turf_corner_percent'),
+  dirtGoalPercent: real('dirt_goal_percent'),
+  dirtCornerPercent: real('dirt_corner_percent'),
+  cushionValue: real('cushion_value'), // NULL許容（未測定ケース）
+  sourceFile: text('source_file'), // 取込元CSVパスなど
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+export type TrackConditionDailySummary = typeof trackConditionDailySummaries.$inferSelect;
+export type NewTrackConditionDailySummary = typeof trackConditionDailySummaries.$inferInsert;
+
 export const trainingRecords = sqliteTable('training_records', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   trainingType: text('training_type', { enum: ['hill', 'wood'] }).notNull(),

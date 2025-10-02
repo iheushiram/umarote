@@ -41,3 +41,6 @@ coverage/
 # OS 由来
 Thumbs.db
 Desktop.ini
+
+/track_conditions
+/analysis

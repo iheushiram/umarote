@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Typography,
@@ -242,6 +242,25 @@ function HorseRacingTable() {
   const { raceId } = useParams<{ raceId: string }>();
   const navigate = useNavigate();
   type CushionRange = 'none' | 'lte_7_9' | '8_0_8_9' | '9_0_9_9' | 'gte_10_0';
+  type CushionRangeBin = Exclude<CushionRange, 'none'>;
+
+  type FinishCounts = [number, number, number, number];
+
+  const formatFinishCounts = (counts?: FinishCounts | null): string => {
+    if (!counts) return '-';
+    const total = counts.reduce((sum, value) => sum + value, 0);
+    if (total === 0) return '-';
+    return `${counts[0]}-${counts[1]}-${counts[2]}-${counts[3]}`;
+  };
+
+  const getCushionRange = (value?: number | null): CushionRange => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'none';
+    if (value <= 7.9) return 'lte_7_9';
+    if (value < 9.0) return '8_0_8_9';
+    if (value < 10.0) return '9_0_9_9';
+    return 'gte_10_0';
+  };
+
   const rangeLabels: Record<CushionRange, string> = {
     none: 'なし',
     lte_7_9: '～7.9',
@@ -664,7 +683,6 @@ function HorseRacingTable() {
       };
       setPrizeMoneyCache(prev => new Map(prev).set(targetRaceId, info));
     } catch (error) {
-      console.error(`Error fetching prize money for race ${targetRaceId}:`, error);
     } finally {
       setLoadingPrizeMoney(prev => {
         const ns = new Set(prev);
@@ -708,7 +726,6 @@ function HorseRacingTable() {
         return next;
       });
     } catch (error) {
-      console.warn('前走レベル情報の取得に失敗:', targetRaceId, error);
       setPreRaceLevelCache(prev => {
         if (prev.has(targetRaceId)) return prev;
         const next = new Map(prev);
@@ -794,7 +811,7 @@ function HorseRacingTable() {
             distance: race.distance,
             surface: race.surface,
             direction: race.direction,
-            cushionValue: race.cushionValue,
+            cushionValue: typeof race.cushionValue === 'number' ? race.cushionValue : undefined,
             date: race.date
           });
 
@@ -810,7 +827,6 @@ function HorseRacingTable() {
             sameVenue.sort((a, b) => a.raceNo - b.raceNo);
             setSiblingRaces(sameVenue);
           } catch (e) {
-            console.warn('同日レース一覧の取得に失敗:', e);
             setAllRacesSameDate([]);
             setVenuesOnDate([]);
             setSelectedVenue("");
@@ -896,7 +912,10 @@ function HorseRacingTable() {
               direction: r.direction,
               minus3FAvgSpeed: (typeof r.minusThreeFurlongAvgSpeed === 'number' && isFinite(r.minusThreeFurlongAvgSpeed))
                 ? r.minusThreeFurlongAvgSpeed
-                : null
+                : null,
+              cushionValue: (typeof r.cushionValue === 'number' && Number.isFinite(r.cushionValue))
+                ? r.cushionValue
+                : undefined
             };
           });
 
@@ -943,17 +962,13 @@ function HorseRacingTable() {
           for (const raceId of prev1RaceIds) {
             try {
               const appliedBeforeDate = calcDate || undefined;
-              console.log('🔍 Average: raceInfo:', raceInfo);
-              console.log('🔍 Average: Fetching for raceId:', raceId, 'beforeDate:', appliedBeforeDate);
               const results = await admin.getCoRunnerNextResults(raceId, calcDate || undefined); // 平均算出も当日以前で揃える
-              console.log('🔍 Average: Response for', raceId, ':', results);
 
               // 新しいAPIのレスポンス形式に合わせて変換
               if (results) {
                 // 新しいAPIレスポンス形式をチェック
                 const nextResults = (results as any).nextResults || results; // 後方互換性
                 const totalPrevRaceEntries = (results as any).totalPrevRaceEntries || (nextResults.length + 1);
-                console.log('🔍 Average: nextResults for', raceId, ':', nextResults, 'totalEntries:', totalPrevRaceEntries);
 
                 if (Array.isArray(nextResults) && nextResults.length > 0) {
                 const runners = nextResults.map((r: any) => ({
@@ -977,7 +992,6 @@ function HorseRacingTable() {
                 }
               }
             } catch (error) {
-              console.error('Error fetching race level data for raceId:', raceId, error);
             }
           }
 
@@ -1071,7 +1085,6 @@ function HorseRacingTable() {
           // 左カラム / サイドバーへ供給
           useRaceLevelStore.getState().setItems(ranked);
         } catch (e) {
-          console.warn('レースレベル（同走馬の次走平均着順）算出に失敗:', e);
           setPrevRaceCohortAvgMap(new Map());
           useRaceLevelStore.getState().setItems([]);
         }
@@ -1103,7 +1116,6 @@ function HorseRacingTable() {
           setPrevMinus3FAvgSpeed(cntMinus > 0 ? Math.round((sumMinus / cntMinus) * 10) / 10 : null);
           setPrevMinus3FAvgSpeedCount(cntMinus);
         } catch (e) {
-          console.warn('前走平均時速の算出に失敗:', e);
           setPrevAvgSpeed(null);
           setPrevAvgSpeedCount(0);
           setPrevMinus3FAvgSpeed(null);
@@ -1154,7 +1166,6 @@ function HorseRacingTable() {
             setResultRows(rows);
           }
         } catch (e) {
-          console.warn('結果取得に失敗（タブ非表示継続）:', e);
           setHasResults(false);
         }
 
@@ -1239,14 +1250,12 @@ function HorseRacingTable() {
             setAvgMinus3FCount(0);
           }
         } catch (e) {
-          console.warn('平均タイム取得に失敗:', e);
           setAvgTimeSec(null);
           setAvgTimeCount(0);
           setAvgMinus3FSpeed(null);
           setAvgMinus3FCount(0);
         }
       } catch (err) {
-        console.error(err);
         setError('出馬表の読み込みに失敗しました');
       } finally {
         setLoading(false);
@@ -1536,14 +1545,10 @@ function HorseRacingTable() {
     try {
       const admin = new AdminService();
       const currentRaceDate = raceInfo?.date; // 現在のレースの日付を取得
-      console.log('🔍 Click: raceInfo:', raceInfo);
-      console.log('🔍 Click: Fetching for raceId:', prevRace.raceId, 'beforeDate:', currentRaceDate);
       const response = await admin.getCoRunnerNextResults(prevRace.raceId, currentRaceDate);
-      console.log('🔍 Click: Response:', response);
 
       // 新しいAPIレスポンス形式に対応
       const results = (response as any)?.nextResults || response || [];
-      console.log('🔍 Click: Extracted results:', results, 'length:', Array.isArray(results) ? results.length : 'not array');
 
       const sorted = (Array.isArray(results) ? results : []).slice().sort((a, b) => {
         const aPos = a.finishPosition ?? 9999;
@@ -1562,7 +1567,6 @@ function HorseRacingTable() {
         },
       }));
     } catch (error) {
-      console.error('Error fetching co-runner results:', error);
       setCoRunnerDetails(prev => ({
         ...prev,
         [horseId]: {
@@ -1896,16 +1900,56 @@ function HorseRacingTable() {
     };
   }, [prevRankList, prev2RankList]);
 
-  // モックのクッション値別成績（horseId -> range -> [1,2,3,other]）
-  const cushionStats: Record<string, Record<CushionRange, [number, number, number, number]>> = {} as any;
+  const cushionStats = useMemo(() => {
+    const createEmptyBuckets = (): Record<CushionRangeBin, FinishCounts> => ({
+      lte_7_9: [0, 0, 0, 0],
+      '8_0_8_9': [0, 0, 0, 0],
+      '9_0_9_9': [0, 0, 0, 0],
+      gte_10_0: [0, 0, 0, 0],
+    });
+
+    const increment = (counts: FinishCounts, finish?: number | null) => {
+      if (!finish || finish <= 0) {
+        counts[3] += 1;
+        return;
+      }
+      if (finish === 1) {
+        counts[0] += 1;
+      } else if (finish === 2) {
+        counts[1] += 1;
+      } else if (finish === 3) {
+        counts[2] += 1;
+      } else {
+        counts[3] += 1;
+      }
+    };
+
+    const result: Record<string, Record<CushionRangeBin, FinishCounts>> = {};
+
+    for (const entry of entries) {
+      let hasData = false;
+      const buckets = createEmptyBuckets();
+      for (const race of entry.races) {
+        if (race.surface !== '芝') continue;
+        const cushion = typeof race.cushionValue === 'number' && Number.isFinite(race.cushionValue)
+          ? race.cushionValue
+          : null;
+        if (cushion === null) continue;
+        const range = getCushionRange(cushion);
+        if (range === 'none') continue;
+        increment(buckets[range as CushionRangeBin], race.position);
+        hasData = true;
+      }
+      if (hasData) {
+        result[entry.horseId] = buckets;
+      }
+    }
+
+    return result;
+  }, [entries]);
 
   type TurnKey = 'left' | 'right';
-  const formatTurnCounts = (counts: [number, number, number, number] | undefined): string => {
-    if (!counts) return '-';
-    const total = counts.reduce((acc, cur) => acc + cur, 0);
-    if (total === 0) return '-';
-    return `${counts[0]}-${counts[1]}-${counts[2]}-${counts[3]}`;
-  };
+  const formatTurnCounts = (counts?: FinishCounts): string => formatFinishCounts(counts);
 
   const turnStatsMap = useMemo(() => {
     const map = new Map<string, Record<TurnKey, [number, number, number, number]>>();
@@ -2140,7 +2184,10 @@ function HorseRacingTable() {
               return `${raceInfo.date} `;
             })()}
             {raceInfo.venue} {raceInfo.surface}{raceInfo.distance}m {raceInfo.direction}回り
-            {raceInfo.surface === '芝' && ` クッション値:${raceInfo.cushionValue}`}
+            {raceInfo.surface === '芝'
+              && typeof raceInfo.cushionValue === 'number'
+              && Number.isFinite(raceInfo.cushionValue)
+              && ` クッション値:${raceInfo.cushionValue}`}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
             {(() => {
@@ -2440,13 +2487,19 @@ function HorseRacingTable() {
                         <span className="horse-info__pop"> {h.popularity ? `(${h.popularity}人気)` : ''}</span>
                       </div>
                     </div>
-                    {/* クッション値別成績（選択レンジ）: 非表示時も高さ確保 */}
-                    <div className="horse-info__cushion" style={{ visibility: selectedRange === 'none' ? 'hidden' as const : 'visible' as const }}>
+                    {/* クッション値別成績（自動レンジ推定対応） */}
+                    <div className="horse-info__cushion">
                       {(() => {
-                        if (selectedRange === 'none') return 'クッション: -';
-                        const rec = cushionStats[h.horseId]?.[selectedRange as Exclude<CushionRange, 'none'>];
-                        if (!rec) return 'クッション: -';
-                        return `クッション: ${rec[0]}-${rec[1]}-${rec[2]}-${rec[3]}`;
+                        const horseStats = cushionStats[h.horseId];
+                        const rawRange = selectedRange === 'none'
+                          ? getCushionRange(raceInfo.surface === '芝' ? raceInfo.cushionValue : undefined)
+                          : selectedRange;
+                        const effectiveRange = rawRange === 'none' ? undefined : rawRange;
+                        const counts = effectiveRange ? horseStats?.[effectiveRange as CushionRangeBin] : undefined;
+                        const formatted = formatFinishCounts(counts);
+                        const label = effectiveRange ? rangeLabels[effectiveRange] : undefined;
+                        const prefix = label ? `クッション(${label})` : 'クッション';
+                        return `${prefix}: ${formatted}`;
                       })()}
                     </div>
                     {/* 周り方別成績 */}
@@ -3001,3 +3054,5 @@ function HorseRacingTable() {
 }
 
 export default HorseRacingTable;
+
+

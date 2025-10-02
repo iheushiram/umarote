@@ -19,6 +19,7 @@ import RaceCsvUpload from '../components/admin/RaceCsvUpload';
 import RaceResultCsvUpload from '../components/admin/RaceResultCsvUpload';
 import RaceEntryCsvUpload from '../components/admin/RaceEntryCsvUpload';
 import TrainingCsvUpload from '../components/admin/TrainingCsvUpload';
+import TrackConditionSummaryCsvUpload from '../components/admin/TrackConditionSummaryCsvUpload';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -95,6 +96,7 @@ export default function AdminPage() {
             <Tab label="レース結果" icon={<Upload size={16} />} iconPosition="start" {...a11yProps(2)} />
             <Tab label="出馬表" icon={<Upload size={16} />} iconPosition="start" {...a11yProps(3)} />
             <Tab label="調教" icon={<Upload size={16} />} iconPosition="start" {...a11yProps(4)} />
+            <Tab label="馬場サマリー" icon={<Upload size={16} />} iconPosition="start" {...a11yProps(5)} />
           </Tabs>
         </Box>
 
@@ -114,6 +116,9 @@ export default function AdminPage() {
         </TabPanel>
         <TabPanel value={tabValue} index={4}>
           <TrainingCsvUpload />
+        </TabPanel>
+        <TabPanel value={tabValue} index={5}>
+          <TrackConditionSummaryCsvUpload />
         </TabPanel>
       </Paper>
     </Box>

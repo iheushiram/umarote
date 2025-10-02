@@ -1,7 +1,7 @@
 // API Base URL - 環境に応じて変更
 import { VenueBoard } from '../types/horse';
 import { formatRaceTime } from '../utils/timeUtils';
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://192.168.1.3:8787';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://192.168.1.2:8787';
 
 export interface HorseData {
   id: string;
@@ -52,6 +52,7 @@ export interface RaceResultData {
   distance: number;
   direction: '右' | '左';
   courseCondition: '良' | '稍' | '重' | '不良';
+  cushionValue?: number | null;
   pos1c?: number; // 1角
   finishPosition: number;
   jockey: string;
@@ -282,6 +283,25 @@ export class AdminService {
     } catch (error) {
       console.error('Error inserting race results with horses:', error);
       throw new Error('レース結果と馬データの挿入に失敗しました');
+    }
+  }
+
+  async insertTrackConditionDailySummaries(csvData: any[], sourceFile?: string): Promise<void> {
+    try {
+      const body: Record<string, unknown> = { csvData };
+      if (sourceFile) body.sourceFile = sourceFile;
+      const response = await fetch(`${API_BASE_URL}/api/track-condition-daily-summaries`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || '馬場サマリーCSVの登録に失敗しました');
+      }
+    } catch (error) {
+      console.error('Error inserting track condition daily summaries:', error);
+      throw new Error('馬場サマリーCSVの登録に失敗しました');
     }
   }
 

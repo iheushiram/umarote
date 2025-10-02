@@ -19,6 +19,12 @@
 # まとめて消す
 `npx wrangler d1 execute umarote-db --local --command "DELETE FROM race_results;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM race_entries;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM races;" && npx wrangler d1 execute umarote-db --local --command "DELETE FROM horses;"`
 
+# 競馬場情報確認
+`npx wrangler d1 execute umarote-db --local --command "SELECT * from track_condition_daily_summaries limit 10;"`
+
+# SQL実行汎用コマンド
+`npx wrangler d1 execute umarote-db --local --command ""`
+
 # APi test
 `npm run test:run`
 

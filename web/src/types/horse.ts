@@ -156,6 +156,7 @@ export interface RaceDetail {
   earnedMoney?: number; // 収得賞金（万円）
   direction?: '右' | '左';
   minus3FAvgSpeed?: number | null; // -3F平均速度 (km/h)
+  cushionValue?: number | null; // クッション値（芝のみ）
 }
 
 // 馬柱用馬情報

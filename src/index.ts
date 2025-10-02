@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createDb } from './db/db';
-import { horses, races, raceResults, raceEntries, trackConditions, trainingRecords } from './db/schema';
+import { horses, races, raceResults, raceEntries, trackConditions, trainingRecords, trackConditionDailySummaries } from './db/schema';
 
 const SQLITE_VARIABLE_LIMIT = 999;
 const CHUNK_SIZE = 90; // safety margin for SQLite variable limit
@@ -13,6 +13,163 @@ const chunkArray = <T>(arr: T[], size: number): T[][] => {
     chunks.push(arr.slice(i, i + size));
   }
   return chunks;
+};
+
+const normalizeSurface = (value?: string | null): '芝' | 'ダート' | undefined => {
+  if (!value) return undefined;
+  const trimmed = String(value).trim();
+  if (trimmed === '芝') return '芝';
+  if (trimmed === 'ダート') return 'ダート';
+  return undefined;
+};
+
+const normalizeDateToISO = (raw?: string | null): string | null => {
+  if (!raw) return null;
+  const digits = String(raw).replace(/[^0-9]/g, '');
+  if (!digits) return null;
+  let normalized = digits;
+  if (digits.length === 6) {
+    normalized = `20${digits}`;
+  } else if (digits.length > 8) {
+    normalized = digits.slice(0, 8);
+  }
+  if (normalized.length !== 8) return null;
+  const year = normalized.slice(0, 4);
+  const month = normalized.slice(4, 6);
+  const day = normalized.slice(6, 8);
+  return `${year}-${month}-${day}`;
+};
+
+const buildVenueCandidates = (raw?: string | null): string[] => {
+  if (!raw) return [];
+  const base = String(raw).trim();
+  if (!base) return [];
+  const candidates = new Set<string>();
+  candidates.add(base);
+  if (!base.endsWith('競馬場')) {
+    candidates.add(`${base}競馬場`);
+  } else {
+    candidates.add(base.replace(/競馬場$/, ''));
+  }
+  return Array.from(candidates);
+};
+
+const fetchCushionFromSummary = async (
+  db: ReturnType<typeof createDb>,
+  date?: string | null,
+  venue?: string | null,
+  cache?: Map<string, number | null>,
+  logged?: Set<string>
+): Promise<number | undefined> => {
+  const key = `${date ?? ''}|${venue ?? ''}`;
+  if (cache?.has(key)) {
+    const cached = cache.get(key);
+    return cached === null ? undefined : cached;
+  }
+
+  const isoDate = normalizeDateToISO(date);
+  const venues = buildVenueCandidates(venue);
+  const dateCandidates = new Set<string>();
+  if (isoDate) {
+    dateCandidates.add(isoDate);
+    dateCandidates.add(isoDate.replace(/-/g, ''));
+    dateCandidates.add(isoDate.replace(/-/g, '/'));
+  }
+  if (date && !isoDate) {
+    const trimmed = String(date).trim();
+    if (trimmed) {
+      dateCandidates.add(trimmed);
+    }
+  }
+
+  const dateList = Array.from(dateCandidates).filter(Boolean);
+
+  if (dateList.length === 0 || venues.length === 0) {
+    cache?.set(key, null);
+    return undefined;
+  }
+
+  const row = await db.select({
+    cushionValue: trackConditionDailySummaries.cushionValue,
+    updatedAt: trackConditionDailySummaries.updatedAt,
+  })
+    .from(trackConditionDailySummaries)
+    .where(
+      and(
+        inArray(trackConditionDailySummaries.measurementDate, dateList as any),
+        inArray(trackConditionDailySummaries.venue, venues as any)
+      )
+    )
+    .orderBy(desc(trackConditionDailySummaries.updatedAt))
+    .limit(1)
+    .get();
+
+  const value = typeof row?.cushionValue === 'number' ? row.cushionValue : undefined;
+  cache?.set(key, value ?? null);
+
+  if (value === undefined && logged && !logged.has(key)) {
+    console.log('[cushion] summary not found', { date: isoDate, venueCandidates: venues });
+    logged.add(key);
+  }
+
+  return value;
+};
+
+const enrichRaceListWithCushion = async <T extends { trackConditionId?: string | null; surface?: string | null; date?: string | null; venue?: string | null }>(
+  db: ReturnType<typeof createDb>,
+  raceRows: T[]
+): Promise<Array<T & { cushionValue?: number }>> => {
+  if (raceRows.length === 0) return raceRows;
+
+  const trackConditionIds = Array.from(
+    new Set(
+      raceRows
+        .map(row => row.trackConditionId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+    )
+  );
+
+  const trackConditionRows = trackConditionIds.length > 0
+    ? await db.select({
+        id: trackConditions.id,
+        cushionValue: trackConditions.cushionValue,
+      })
+      .from(trackConditions)
+      .where(inArray(trackConditions.id, trackConditionIds as any))
+    : [];
+
+  const trackConditionMap = new Map(trackConditionRows.map(row => [row.id, row.cushionValue] as const));
+  const summaryCache = new Map<string, number | null>();
+  const summaryLogCache = new Set<string>();
+
+  const enriched: Array<T & { cushionValue?: number }> = [];
+
+  for (const row of raceRows) {
+    let cushionValue: number | undefined;
+    const surface = normalizeSurface(row.surface);
+    if (surface === '芝') {
+      const rawValue = row.trackConditionId ? trackConditionMap.get(row.trackConditionId) : undefined;
+      if (typeof rawValue === 'number') {
+        cushionValue = rawValue;
+      } else {
+        cushionValue = await fetchCushionFromSummary(
+          db,
+          row.date,
+          row.venue,
+          summaryCache,
+          summaryLogCache,
+        );
+      }
+    }
+
+    enriched.push({
+      ...row,
+      surface: (surface ?? row.surface) as typeof row.surface,
+      cushionValue,
+    });
+  }
+
+  return enriched;
 };
 import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
 import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry, NewTrainingRecord } from './db/schema';
@@ -265,19 +422,20 @@ app.get('/api/races', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const date = c.req.query('date');
-    
+
 
     if (date) {
       // 日付パラメータがある場合は、YYYY-MM-DD形式をYYYYMMDD形式に変換
       const dateStr = date.replace(/-/g, '');
 
       const filteredRaces = await db.select().from(races).where(eq(races.date, dateStr));
-
-      return c.json(filteredRaces);
+      const enriched = await enrichRaceListWithCushion(db, filteredRaces);
+      return c.json(enriched);
     } else {
       // 日付パラメータがない場合は全レースを取得
       const allRaces = await db.select().from(races);
-      return c.json(allRaces);
+      const enriched = await enrichRaceListWithCushion(db, allRaces);
+      return c.json(enriched);
     }
   } catch (error) {
     console.error('Error fetching races:', error);
@@ -1398,7 +1556,38 @@ app.get('/api/races/:raceId', async (c) => {
     if (!race) {
       return c.json({ error: 'レースが見つかりません' }, 404);
     }
-    return c.json(race);
+    let cushionValue: number | undefined;
+    const surface = normalizeSurface(race.surface);
+    if (surface === '芝') {
+      if (race.trackConditionId) {
+        const trackRow = await db.select({
+          id: trackConditions.id,
+          cushionValue: trackConditions.cushionValue,
+        }).from(trackConditions)
+          .where(eq(trackConditions.id, race.trackConditionId))
+          .get();
+        if (trackRow && typeof trackRow.cushionValue === 'number') {
+          cushionValue = trackRow.cushionValue;
+        }
+      }
+
+      if (cushionValue === undefined) {
+        cushionValue = await fetchCushionFromSummary(db, race.date, race.venue);
+      }
+
+      if (cushionValue === undefined) {
+        console.log('[cushion] not resolved for race', {
+          raceId,
+          date: race.date,
+          venue: race.venue,
+          trackConditionId: race.trackConditionId,
+        });
+      }
+    }
+    return c.json({
+      ...race,
+      cushionValue,
+    });
   } catch (error) {
     console.error('Error getting race:', error);
     return c.json({ error: 'レース情報の取得に失敗しました' }, 500);
@@ -1484,6 +1673,8 @@ app.get('/api/races/:raceId/entries-with-history', async (c) => {
 
     let recentResultsMap = new Map<string, any[]>();
     if (horseIds.length > 0) {
+      const summaryCache = new Map<string, number | null>();
+      const summaryLogCache = new Set<string>();
       const entriesWithHistory = await Promise.all(
         horseIds.map(async (horseId) => {
           const conditions = [eq(raceResults.horseId, horseId)];
@@ -1495,7 +1686,48 @@ app.get('/api/races/:raceId/entries-with-history', async (c) => {
             .where(whereClause)
             .orderBy(desc(raceResults.date), raceResults.popularity)
             .limit(limit);
-          return [horseId, rows] as const;
+
+          const trackConditionIds = Array.from(
+            new Set(
+              rows
+                .map(row => row.trackConditionId)
+                .filter((id): id is string => typeof id === 'string' && id.length > 0)
+            )
+          );
+          const trackConditionRows = trackConditionIds.length > 0
+            ? await db.select({
+                id: trackConditions.id,
+                cushionValue: trackConditions.cushionValue,
+              })
+              .from(trackConditions)
+              .where(inArray(trackConditions.id, trackConditionIds as any))
+            : [];
+          const trackConditionMap = new Map(trackConditionRows.map(row => [row.id, row.cushionValue] as const));
+
+          const rowsWithCushion = await Promise.all(rows.map(async (row) => {
+            let cushionValue: number | undefined;
+            const courseSurface = normalizeSurface(row.courseType);
+            if (courseSurface === '芝') {
+              const rawValue = row.trackConditionId ? trackConditionMap.get(row.trackConditionId) : undefined;
+              if (typeof rawValue === 'number') {
+                cushionValue = rawValue;
+              } else {
+                cushionValue = await fetchCushionFromSummary(
+                  db,
+                  row.date,
+                  row.venue,
+                  summaryCache,
+                  summaryLogCache,
+                );
+              }
+            }
+            return {
+              ...row,
+              cushionValue,
+            };
+          }));
+
+          return [horseId, rowsWithCushion] as const;
         })
       );
       recentResultsMap = new Map(entriesWithHistory);
@@ -2207,40 +2439,80 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
     const uniqueRaceIds = Array.from(new Set(entries.map(e => e.raceId)));
     const raceRows = await db.select().from(races).where(inArray(races.raceId, uniqueRaceIds as any));
     const raceMap = new Map(raceRows.map(r => [r.raceId, r] as const));
+    const trackConditionIds = Array.from(
+      new Set(
+        raceRows
+          .map(row => row.trackConditionId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      )
+    );
+    const trackConditionRows = trackConditionIds.length > 0
+      ? await db.select({
+          id: trackConditions.id,
+          cushionValue: trackConditions.cushionValue,
+          surface: trackConditions.surface,
+        })
+        .from(trackConditions)
+        .where(inArray(trackConditions.id, trackConditionIds as any))
+      : [];
+    const trackConditionMap = new Map(trackConditionRows.map(row => [row.id, row] as const));
 
-    // レースごとに出馬表をグループ化し、レース情報も含める
-    const entriesByRace = entries.reduce((acc, entry) => {
-      if (!acc[entry.raceId]) {
+    const cushionSummaryCache = new Map<string, number | null>();
+    const cushionLogCache = new Set<string>();
+    const entriesByRace: Record<string, { entries: any[]; raceInfo: any }> = {};
+
+    for (const entry of entries) {
+      if (!entriesByRace[entry.raceId]) {
         const raceNo = getRaceNoFromRaceId(entry.raceId);
-        
-        acc[entry.raceId] = {
+        const raceRow = raceMap.get(entry.raceId);
+        const surface = normalizeSurface(raceRow?.surface) ?? normalizeSurface(entry.surface) ?? '芝';
+        const trackCondRow = raceRow?.trackConditionId
+          ? trackConditionMap.get(raceRow.trackConditionId)
+          : undefined;
+
+        let cushionValue: number | undefined;
+        if (surface === '芝') {
+          if (trackCondRow && typeof trackCondRow.cushionValue === 'number') {
+            cushionValue = trackCondRow.cushionValue;
+          } else {
+            cushionValue = await fetchCushionFromSummary(
+              db,
+              raceRow?.date ?? entry.date,
+              raceRow?.venue ?? getVenueFromRaceId(entry.raceId),
+              cushionSummaryCache,
+              cushionLogCache,
+            );
+          }
+        }
+
+        entriesByRace[entry.raceId] = {
           entries: [],
           raceInfo: {
             raceId: entry.raceId,
-            date: entry.date,
-            venue: getVenueFromRaceId(entry.raceId),
-            meetingNumber: getMeetingNumberFromRaceId(entry.raceId),
-            dayNumber: getDayNumberFromRaceId(entry.raceId),
-            raceNo: raceNo,
-            raceName: entry.raceName || `レース${raceNo}`,
-            className: '未勝利', // デフォルト値
-            surface: entry.surface || '芝',
-            distance: entry.distance || 1600,
-            direction: '右', // デフォルト値
-            courseConf: undefined,
-            trackCond: '良', // デフォルト値
-            offAt: (() => {
-              const r = raceMap.get(entry.raceId);
-              return (r && r.offAt) ? r.offAt : '00:00';
-            })(),
-            grade: undefined,
-            status: '発売中', // デフォルト値
-            weather: undefined,
-            fieldSize: 0
+            date: raceRow?.date ?? entry.date,
+            venue: raceRow?.venue ?? getVenueFromRaceId(entry.raceId),
+            meetingNumber: raceRow?.meetingNumber ?? getMeetingNumberFromRaceId(entry.raceId),
+            dayNumber: raceRow?.dayNumber ?? getDayNumberFromRaceId(entry.raceId),
+            raceNo,
+            raceName: raceRow?.raceName ?? entry.raceName ?? `レース${raceNo}`,
+            className: raceRow?.className ?? '未勝利',
+            surface,
+            distance: raceRow?.distance ?? entry.distance ?? 1600,
+            direction: raceRow?.direction ?? '右',
+            courseConf: raceRow?.courseConf ?? undefined,
+            trackCond: raceRow?.trackCond ?? entry.trackCond ?? '良',
+            cushionValue,
+            offAt: raceRow?.offAt ?? '00:00',
+            grade: raceRow?.grade ?? undefined,
+            status: raceRow?.status ?? '発売中',
+            weather: raceRow?.weather ?? undefined,
+            fieldSize: 0,
+            win5: raceRow?.win5 ?? undefined,
           }
         };
       }
-      acc[entry.raceId].entries.push({
+
+      entriesByRace[entry.raceId].entries.push({
         ...entry,
         horse: {
           id: entry.horseId,
@@ -2256,9 +2528,8 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
           earnings: 0
         }
       });
-      acc[entry.raceId].raceInfo.fieldSize = acc[entry.raceId].entries.length;
-      return acc;
-    }, {} as Record<string, { entries: any[], raceInfo: any }>);
+      entriesByRace[entry.raceId].raceInfo.fieldSize = entriesByRace[entry.raceId].entries.length;
+    }
 
     // 馬番順にソート
     Object.values(entriesByRace).forEach(raceData => {
