@@ -692,7 +692,7 @@ function HorseRacingTable() {
     }
   };
 
-  const fetchPreRaceLevelInfo = async (targetRaceId: string, raceDate?: string) => {
+  const fetchPreRaceLevelInfo = async (targetRaceId: string, raceDate?: string, fieldSizeHint?: number) => {
     if (!targetRaceId) return;
     if (preRaceLevelCache.has(targetRaceId)) return;
     if (loadingPreRaceLevel.has(targetRaceId)) return;
@@ -706,8 +706,15 @@ function HorseRacingTable() {
     try {
       const admin = new AdminService();
       const beforeDate = raceDate ? normalizeDateStr(raceDate) : undefined;
+      const limit = (() => {
+        if (fieldSizeHint && fieldSizeHint > 0) {
+          const padded = fieldSizeHint + 2;
+          return Math.min(Math.max(padded, 18), 100);
+        }
+        return 100;
+      })();
       const response = await admin.getRaceEntriesWithHistory(targetRaceId, {
-        limit: 100,
+        limit,
         beforeDate,
       });
       const entries = Array.isArray(response.entries) ? response.entries : [];
@@ -845,21 +852,26 @@ function HorseRacingTable() {
         );
 
         // 前走のユニークなレースIDを収集
-        const prevRaceDateMap = new Map<string, string>();
-        const prevRaceIdSet = new Set<string>();
+        const prevRaceDateMapForPreLevel = new Map<string, string>();
+        const prevRaceIdSetAll = new Set<string>();
+        const prevRaceIdSetForPreLevel = new Set<string>();
         es.forEach(e => {
           const recentList = resultsMap.get(e.horseId) || [];
-          recentList.forEach(r => {
+          recentList.forEach((r, idx) => {
             if (!r?.raceId) return;
-            prevRaceIdSet.add(r.raceId);
-            const normalized = normalizeDateStr(r.date);
-            if (normalized && !prevRaceDateMap.has(r.raceId)) {
-              prevRaceDateMap.set(r.raceId, normalized);
+            prevRaceIdSetAll.add(r.raceId);
+            if (idx < 2) {
+              prevRaceIdSetForPreLevel.add(r.raceId);
+              const normalized = normalizeDateStr(r.date);
+              if (normalized && !prevRaceDateMapForPreLevel.has(r.raceId)) {
+                prevRaceDateMapForPreLevel.set(r.raceId, normalized);
+              }
             }
           });
         });
 
-        const prevRaceIds = Array.from(prevRaceIdSet);
+        const prevRaceIds = Array.from(prevRaceIdSetAll);
+        const prevRaceIdsForPreLevel = Array.from(prevRaceIdSetForPreLevel);
 
         // 頭数を一括取得（races.fieldSize → race_results件数 → race_entries件数 の順でフォールバック）
         let basicsMap = new Map<string, RaceBasicInfo>();
@@ -1181,9 +1193,12 @@ function HorseRacingTable() {
 
         (async () => {
           const chunkSize = 4;
-          for (let i = 0; i < prevRaceIds.length; i += chunkSize) {
-            const chunk = prevRaceIds.slice(i, i + chunkSize);
-            await Promise.all(chunk.map(rid => fetchPreRaceLevelInfo(rid, prevRaceDateMap.get(rid))));
+          for (let i = 0; i < prevRaceIdsForPreLevel.length; i += chunkSize) {
+            const chunk = prevRaceIdsForPreLevel.slice(i, i + chunkSize);
+            await Promise.all(chunk.map(rid => {
+              const fieldSizeHint = fsMap.get(rid) ?? basicsMap.get(rid)?.fieldSize ?? basicsMap.get(rid)?.entryCount ?? basicsMap.get(rid)?.resultCount;
+              return fetchPreRaceLevelInfo(rid, prevRaceDateMapForPreLevel.get(rid), fieldSizeHint ?? undefined);
+            }));
           }
         })();
 
