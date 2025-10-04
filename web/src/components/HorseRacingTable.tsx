@@ -2012,9 +2012,16 @@ function HorseRacingTable() {
 
   const raceTurnKey: TurnKey | null = useMemo(() => {
     const direction = raceInfo.direction?.trim();
-    if (direction?.includes('左')) return 'left';
-    if (direction?.includes('右')) return 'right';
-    return inferTurnKeyFromName(raceInfo.venue);
+    const directionKey: TurnKey | null = direction?.includes('左')
+      ? 'left'
+      : direction?.includes('右')
+        ? 'right'
+        : null;
+    const inferredTurn = inferTurnKeyFromName(raceInfo.venue);
+    if (directionKey && inferredTurn && directionKey !== inferredTurn) {
+      return inferredTurn;
+    }
+    return directionKey ?? inferredTurn;
   }, [raceInfo.direction, raceInfo.venue]);
 
   const venueStatsMap = useMemo(() => {

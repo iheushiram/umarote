@@ -20,6 +20,7 @@ import RaceResultCsvUpload from '../components/admin/RaceResultCsvUpload';
 import RaceEntryCsvUpload from '../components/admin/RaceEntryCsvUpload';
 import TrainingCsvUpload from '../components/admin/TrainingCsvUpload';
 import TrackConditionSummaryCsvUpload from '../components/admin/TrackConditionSummaryCsvUpload';
+import TrackConditionManualForm from '../components/admin/TrackConditionManualForm';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -119,6 +120,7 @@ export default function AdminPage() {
         </TabPanel>
         <TabPanel value={tabValue} index={5}>
           <TrackConditionSummaryCsvUpload />
+          <TrackConditionManualForm />
         </TabPanel>
       </Paper>
     </Box>

@@ -175,6 +175,57 @@ import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
 import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry, NewTrainingRecord } from './db/schema';
 import { eq, sql, and, inArray, desc, lt, lte, gte, gt } from 'drizzle-orm';
 
+type TrackDirection = '右' | '左';
+
+const VENUE_DIRECTION_MAP: Record<string, { default: TrackDirection; exceptions?: { distance: number; direction: TrackDirection }[] }> = {
+  '札幌': { default: '右' },
+  '函館': { default: '右' },
+  '福島': { default: '右' },
+  '新潟': {
+    default: '左',
+    exceptions: [{ distance: 1000, direction: '右' }],
+  },
+  '東京': { default: '左' },
+  '中山': { default: '右' },
+  '中京': { default: '左' },
+  '京都': { default: '右' },
+  '阪神': { default: '右' },
+  '小倉': { default: '右' },
+};
+
+function inferDirectionByVenueAndDistance(venue?: string | null, distance?: number | null): TrackDirection {
+  const trimmedVenue = typeof venue === 'string' ? venue.trim() : '';
+  const config = trimmedVenue ? VENUE_DIRECTION_MAP[trimmedVenue] : undefined;
+  const distanceNumber = typeof distance === 'number' ? distance : Number(distance);
+  if (config) {
+    if (Number.isFinite(distanceNumber) && config.exceptions) {
+      for (const exception of config.exceptions) {
+        if (exception.distance === distanceNumber) {
+          return exception.direction;
+        }
+      }
+    }
+    return config.default;
+  }
+  if (Number.isFinite(distanceNumber) && distanceNumber >= 2000) {
+    return '左';
+  }
+  return '右';
+}
+
+function resolveDirection(rawDirection: unknown, venue?: string | null, distance?: number | null): TrackDirection {
+  const inferred = inferDirectionByVenueAndDistance(venue, distance);
+  if (rawDirection === '右' || rawDirection === '左') {
+    if (inferred !== rawDirection) {
+      return inferred;
+    }
+    return rawDirection;
+  }
+  return inferred;
+}
+
+
+
 // レース名からクラス情報を抽出する関数
 function extractClassFromRaceName(raceName: string): string {
   if (!raceName) return '-';
@@ -789,6 +840,16 @@ app.post('/api/race-results-with-horses', async (c) => {
         const { className: clsCsv, grade: gradeCsv } = normalizeCsvClass(classFromResult);
         const offAtCsv = normalizeOffAt(offAtFromResult);
 
+        const venueForDirection = (resultData as any).venueNormalized || resultData.venue;
+        const distanceForDirection = typeof resultData.distance === 'number'
+          ? resultData.distance
+          : Number(resultData.distance);
+        const raceDirection = resolveDirection(
+          resultData.direction,
+          venueForDirection,
+          Number.isFinite(distanceForDirection) ? distanceForDirection : undefined
+        );
+
         const raceData: NewRace = {
           raceId: resultData.raceId,
           date: resultData.date,
@@ -800,7 +861,7 @@ app.post('/api/race-results-with-horses', async (c) => {
           className: clsCsv || (resultData as any).className || inferClassNameFromRaceName(resultData.raceName) || '未勝利',
           surface: resultData.courseType,
           distance: resultData.distance,
-          direction: resultData.direction || '右',
+          direction: raceDirection,
           trackCond: resultData.courseCondition,
           fieldSize: (resultData as any).fieldSize,
           win5: false,
@@ -1097,6 +1158,17 @@ app.post('/api/race-entries-csv', async (c) => {
       const { className: clsCsv, grade: gradeCsv } = normalizeCsvClass(csvClassRaw);
       const offAtCsv = normalizeOffAt(row['発走時刻'] || row['発走'] || row['発走時間']);
 
+      const distanceValue = (() => {
+        const d = String(row['距離'] || '').replace(/[^0-9]/g, '');
+        return d ? parseInt(d) : 0;
+      })();
+
+      const directionValue = resolveDirection(
+        row['direction'],
+        venuePlace,
+        distanceValue
+      );
+
       const raceData: NewRace = {
         raceId: raceId,
         date: normalizedDate,
@@ -1115,11 +1187,8 @@ app.post('/api/race-entries-csv', async (c) => {
           if (/^ダ/.test(distStr)) return 'ダート';
           return 'ダート';
         })(),
-        distance: (() => {
-          const d = String(row['距離'] || '').replace(/[^0-9]/g, '');
-          return d ? parseInt(d) : 0;
-        })(),
-        direction: '右', // デフォルト値
+        distance: distanceValue,
+        direction: directionValue,
         trackCond: '良', // デフォルト値
         fieldSize: parseInt(row['頭数']) || 0,
         win5: false,
@@ -1721,8 +1790,10 @@ app.get('/api/races/:raceId/entries-with-history', async (c) => {
                 );
               }
             }
+            const resolvedDirection = resolveDirection(row.direction, row.venue, row.distance);
             return {
               ...row,
+              direction: resolvedDirection,
               cushionValue,
             };
           }));
@@ -2485,6 +2556,13 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
           }
         }
 
+        const distanceForRaceInfo = raceRow?.distance ?? entry.distance ?? 1600;
+        const directionForRaceInfo = resolveDirection(
+          raceRow?.direction,
+          raceRow?.venue ?? getVenueFromRaceId(entry.raceId),
+          distanceForRaceInfo
+        );
+
         entriesByRace[entry.raceId] = {
           entries: [],
           raceInfo: {
@@ -2497,10 +2575,10 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
             raceName: raceRow?.raceName ?? entry.raceName ?? `レース${raceNo}`,
             className: raceRow?.className ?? '未勝利',
             surface,
-            distance: raceRow?.distance ?? entry.distance ?? 1600,
-            direction: raceRow?.direction ?? '右',
+            distance: distanceForRaceInfo,
+            direction: directionForRaceInfo,
             courseConf: raceRow?.courseConf ?? undefined,
-            trackCond: raceRow?.trackCond ?? entry.trackCond ?? '良',
+            trackCond: raceRow?.trackCond ?? '良',
             cushionValue,
             offAt: raceRow?.offAt ?? '00:00',
             grade: raceRow?.grade ?? undefined,
