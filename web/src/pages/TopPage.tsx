@@ -20,7 +20,7 @@ import {
   useMediaQuery
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { ChevronLeft, ChevronRight, CalendarDays, Cloud, Sun, ChevronDown, ChevronUp, Settings } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, Cloud, Sun, ChevronDown, ChevronUp, Settings, Droplets } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { VenueBoard, Race } from '../types/horse';
@@ -475,14 +475,24 @@ export default function TopPage() {
         <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
           競馬開催情報
         </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<Settings size={16} />}
-          onClick={() => navigate('/admin')}
-          sx={{ minWidth: 120 }}
-        >
-          管理画面
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button
+            variant="contained"
+            startIcon={<Droplets size={16} />}
+            onClick={() => navigate('/analysis/moisture')}
+            sx={{ minWidth: 140 }}
+          >
+            含水率分析
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<Settings size={16} />}
+            onClick={() => navigate('/admin')}
+            sx={{ minWidth: 120 }}
+          >
+            管理画面
+          </Button>
+        </Stack>
       </Box>
       
       {/* 日付選択 */}

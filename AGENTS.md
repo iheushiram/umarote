@@ -90,3 +90,13 @@
 - write in complete, clear sentences. like a Senior Developer when talking to a junior engineer
 - always provide enough context for the user to understand -- in a simple & short way
 - make sure to clearly explain your assumptions, and your conclusions
+
+# コーディング
+- 'UTF-8'でコーディングすること
+
+# PERMISSION
+- Must be called directly (e.g `{"command":["sg", "-p", "'console.log($$$ARGS)'"]","timeout_ms":120000,"workdir":"C:\Users\shmri"}`)
+
+- Must use `workdir` to specify path instead of using `cd` in commands.
+
+- Prohibited from using `bash -lc` or `pwsh.exe -NoLogo -NoProfile -Command` or `powershell.exe -NoLogo -NoProfile -Command` wrapper calls for installed tools.

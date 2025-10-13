@@ -2,7 +2,9 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createDb } from './db/db';
 import { horses, races, raceResults, raceEntries, trackConditions, trainingRecords, trackConditionDailySummaries } from './db/schema';
+
 import { registerMoistureAnalysisRoutes } from './routes/moistureAnalysis';
+import { registerTrainingAnalysisRoutes } from './routes/trainingAnalysis';
 
 const SQLITE_VARIABLE_LIMIT = 999;
 const CHUNK_SIZE = 90; // safety margin for SQLite variable limit
@@ -16,11 +18,11 @@ const chunkArray = <T>(arr: T[], size: number): T[][] => {
   return chunks;
 };
 
-const normalizeSurface = (value?: string | null): '芝' | 'ダート' | undefined => {
+const normalizeSurface = (value?: string | null): '闃・ | '繝繝ｼ繝・ | undefined => {
   if (!value) return undefined;
   const trimmed = String(value).trim();
-  if (trimmed === '芝') return '芝';
-  if (trimmed === 'ダート') return 'ダート';
+  if (trimmed === '闃・) return '闃・;
+  if (trimmed === '繝繝ｼ繝・) return '繝繝ｼ繝・;
   return undefined;
 };
 
@@ -47,10 +49,10 @@ const buildVenueCandidates = (raw?: string | null): string[] => {
   if (!base) return [];
   const candidates = new Set<string>();
   candidates.add(base);
-  if (!base.endsWith('競馬場')) {
-    candidates.add(`${base}競馬場`);
+  if (!base.endsWith('遶ｶ鬥ｬ蝣ｴ')) {
+    candidates.add(`${base}遶ｶ鬥ｬ蝣ｴ`);
   } else {
-    candidates.add(base.replace(/競馬場$/, ''));
+    candidates.add(base.replace(/遶ｶ鬥ｬ蝣ｴ$/, ''));
   }
   return Array.from(candidates);
 };
@@ -148,7 +150,7 @@ const enrichRaceListWithCushion = async <T extends { trackConditionId?: string |
   for (const row of raceRows) {
     let cushionValue: number | undefined;
     const surface = normalizeSurface(row.surface);
-    if (surface === '芝') {
+    if (surface === '闃・) {
       const rawValue = row.trackConditionId ? trackConditionMap.get(row.trackConditionId) : undefined;
       if (typeof rawValue === 'number') {
         cushionValue = rawValue;
@@ -173,32 +175,25 @@ const enrichRaceListWithCushion = async <T extends { trackConditionId?: string |
   return enriched;
 };
 import { buildRaceId, parseMeetingDayFromLegacy } from './utils/raceId';
-import type {
-  NewHorse,
-  NewRace,
-  NewRaceResult,
-  NewRaceEntry,
-  NewTrainingRecord,
-  NewTrackConditionDailySummary,
-} from './db/schema';
+import type { NewHorse, NewRace, NewRaceResult, NewRaceEntry, NewTrackConditionDailySummary, NewTrainingRecord } from './db/schema';
 import { eq, sql, and, inArray, desc, lt, lte, gte, gt } from 'drizzle-orm';
 
-type TrackDirection = '右' | '左';
+type TrackDirection = '蜿ｳ' | '蟾ｦ';
 
 const VENUE_DIRECTION_MAP: Record<string, { default: TrackDirection; exceptions?: { distance: number; direction: TrackDirection }[] }> = {
-  '札幌': { default: '右' },
-  '函館': { default: '右' },
-  '福島': { default: '右' },
-  '新潟': {
-    default: '左',
-    exceptions: [{ distance: 1000, direction: '右' }],
+  '譛ｭ蟷・: { default: '蜿ｳ' },
+  '蜃ｽ鬢ｨ': { default: '蜿ｳ' },
+  '遖丞ｳｶ': { default: '蜿ｳ' },
+  '譁ｰ貎・: {
+    default: '蟾ｦ',
+    exceptions: [{ distance: 1000, direction: '蜿ｳ' }],
   },
-  '東京': { default: '左' },
-  '中山': { default: '右' },
-  '中京': { default: '左' },
-  '京都': { default: '右' },
-  '阪神': { default: '右' },
-  '小倉': { default: '右' },
+  '譚ｱ莠ｬ': { default: '蟾ｦ' },
+  '荳ｭ螻ｱ': { default: '蜿ｳ' },
+  '荳ｭ莠ｬ': { default: '蟾ｦ' },
+  '莠ｬ驛ｽ': { default: '蜿ｳ' },
+  '髦ｪ逾・: { default: '蜿ｳ' },
+  '蟆丞・: { default: '蜿ｳ' },
 };
 
 function inferDirectionByVenueAndDistance(venue?: string | null, distance?: number | null): TrackDirection {
@@ -216,14 +211,14 @@ function inferDirectionByVenueAndDistance(venue?: string | null, distance?: numb
     return config.default;
   }
   if (Number.isFinite(distanceNumber) && distanceNumber >= 2000) {
-    return '左';
+    return '蟾ｦ';
   }
-  return '右';
+  return '蜿ｳ';
 }
 
 function resolveDirection(rawDirection: unknown, venue?: string | null, distance?: number | null): TrackDirection {
   const inferred = inferDirectionByVenueAndDistance(venue, distance);
-  if (rawDirection === '右' || rawDirection === '左') {
+  if (rawDirection === '蜿ｳ' || rawDirection === '蟾ｦ') {
     if (inferred !== rawDirection) {
       return inferred;
     }
@@ -234,31 +229,31 @@ function resolveDirection(rawDirection: unknown, venue?: string | null, distance
 
 
 
-// レース名からクラス情報を抽出する関数
+// 繝ｬ繝ｼ繧ｹ蜷阪°繧峨け繝ｩ繧ｹ諠・ｱ繧呈歓蜃ｺ縺吶ｋ髢｢謨ｰ
 function extractClassFromRaceName(raceName: string): string {
   if (!raceName) return '-';
 
-  // 新馬・未勝利
-  if (raceName.includes('新馬')) return '新馬';
-  if (raceName.includes('未勝利')) return '未勝利';
+  // 譁ｰ鬥ｬ繝ｻ譛ｪ蜍晏茜
+  if (raceName.includes('譁ｰ鬥ｬ')) return '譁ｰ鬥ｬ';
+  if (raceName.includes('譛ｪ蜍晏茜')) return '譛ｪ蜍晏茜';
 
-  // 勝利クラス
-  if (raceName.includes('１勝') || raceName.includes('1勝')) return '1勝クラス';
-  if (raceName.includes('２勝') || raceName.includes('2勝')) return '2勝クラス';
-  if (raceName.includes('３勝') || raceName.includes('3勝')) return '3勝クラス';
+  // 蜍晏茜繧ｯ繝ｩ繧ｹ
+  if (raceName.includes('・大享') || raceName.includes('1蜍・)) return '1蜍昴け繝ｩ繧ｹ';
+  if (raceName.includes('・貞享') || raceName.includes('2蜍・)) return '2蜍昴け繝ｩ繧ｹ';
+  if (raceName.includes('・灘享') || raceName.includes('3蜍・)) return '3蜍昴け繝ｩ繧ｹ';
 
-  // オープン・重賞
-  if (raceName.includes('オープン') || raceName.includes('OP')) return 'オープン';
-  if (raceName.includes('Ｇ１') || raceName.includes('G1')) return 'G1';
-  if (raceName.includes('Ｇ２') || raceName.includes('G2')) return 'G2';
-  if (raceName.includes('Ｇ３') || raceName.includes('G3')) return 'G3';
+  // 繧ｪ繝ｼ繝励Φ繝ｻ驥崎ｳ・
+  if (raceName.includes('繧ｪ繝ｼ繝励Φ') || raceName.includes('OP')) return '繧ｪ繝ｼ繝励Φ';
+  if (raceName.includes('・ｧ・・) || raceName.includes('G1')) return 'G1';
+  if (raceName.includes('・ｧ・・) || raceName.includes('G2')) return 'G2';
+  if (raceName.includes('・ｧ・・) || raceName.includes('G3')) return 'G3';
 
-  // 特別・条件戦
-  if (raceName.includes('特別')) return '特別';
-  if (raceName.includes('条件')) return '条件戦';
+  // 迚ｹ蛻･繝ｻ譚｡莉ｶ謌ｦ
+  if (raceName.includes('迚ｹ蛻･')) return '迚ｹ蛻･';
+  if (raceName.includes('譚｡莉ｶ')) return '譚｡莉ｶ謌ｦ';
 
-  // デフォルト
-  return '条件戦';
+  // 繝・ヵ繧ｩ繝ｫ繝・
+  return '譚｡莉ｶ謌ｦ';
 }
 
 type EntryForDedup = {
@@ -302,17 +297,19 @@ type Bindings = {
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
-registerMoistureAnalysisRoutes(app);
 
-// CORS設定
+// CORS險ｭ螳・
 app.use('/*', cors());
 
-// ヘルスチェック
+registerMoistureAnalysisRoutes(app);
+registerTrainingAnalysisRoutes(app);
+
+// 繝倥Ν繧ｹ繝√ぉ繝・け
 app.get('/', (c) => {
   return c.json({ message: 'Umarote API is running' });
 });
 
-// ===== ヘルパー =====
+// ===== 繝倥Ν繝代・ =====
 function toSecondsFromRaceTime(value: string | number): number {
   if (value === null || value === undefined) return 0;
   const s = String(value).trim();
@@ -323,7 +320,7 @@ function toSecondsFromRaceTime(value: string | number): number {
     const min = parseInt(m, 10) || 0;
     return min * 60 + (isNaN(sec) ? 0 : sec);
   }
-  // 数値形式（例: 1457 → 1分45秒7）
+  // 謨ｰ蛟､蠖｢蠑擾ｼ井ｾ・ 1457 竊・1蛻・5遘・・・
   const n = parseInt(s, 10);
   if (isNaN(n) || n <= 0) return 0;
   const minutes = Math.floor(n / 1000);
@@ -335,40 +332,40 @@ function toSecondsFromRaceTime(value: string | number): number {
 
 function normalizeDigits(input: string): string {
   const z2h: Record<string, string> = {
-    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9'
+    '・・:'0','・・:'1','・・:'2','・・:'3','・・:'4','・・:'5','・・:'6','・・:'7','・・:'8','・・:'9'
   };
-  return input.replace(/[０-９]/g, (ch) => z2h[ch] || ch);
+  return input.replace(/[・・・兢/g, (ch) => z2h[ch] || ch);
 }
 
 function inferClassNameFromRaceName(name?: string): string | undefined {
   if (!name) return undefined;
   const n = normalizeDigits(name);
-  if (/G\s*1|Ｇ\s*1/i.test(n)) return 'G1';
-  if (/G\s*2|Ｇ\s*2/i.test(n)) return 'G2';
-  if (/G\s*3|Ｇ\s*3/i.test(n)) return 'G3';
-  if (/オープン|ＯＰ|OP/i.test(n)) return 'OP(L)';
-  if (/新馬/.test(n)) return '新馬';
-  if (/未勝利/.test(n)) return '未勝利';
-  if (/1\s*勝/.test(n)) return '1勝';
-  if (/2\s*勝/.test(n)) return '2勝';
-  if (/3\s*勝/.test(n)) return '3勝';
+  if (/G\s*1|・ｧ\s*1/i.test(n)) return 'G1';
+  if (/G\s*2|・ｧ\s*2/i.test(n)) return 'G2';
+  if (/G\s*3|・ｧ\s*3/i.test(n)) return 'G3';
+  if (/繧ｪ繝ｼ繝励Φ|・ｯ・ｰ|OP/i.test(n)) return 'OP(L)';
+  if (/譁ｰ鬥ｬ/.test(n)) return '譁ｰ鬥ｬ';
+  if (/譛ｪ蜍晏茜/.test(n)) return '譛ｪ蜍晏茜';
+  if (/1\s*蜍・.test(n)) return '1蜍・;
+  if (/2\s*蜍・.test(n)) return '2蜍・;
+  if (/3\s*蜍・.test(n)) return '3蜍・;
   return undefined;
 }
 
-// CSVのクラス名を正規化（要求仕様）とgrade算出
+// CSV縺ｮ繧ｯ繝ｩ繧ｹ蜷阪ｒ豁｣隕丞喧・郁ｦ∵ｱゆｻ墓ｧ假ｼ峨→grade邂怜・
 function normalizeCsvClass(input?: string): { className?: string; grade?: 'OP' | 'G3' | 'G2' | 'G1' } {
   if (!input) return {};
   const s = normalizeDigits(String(input)).replace(/\s+/g, '').toUpperCase();
-  if (s.includes('G1') || s.includes('Ｇ1') || s.includes('ＧＩ')) return { className: 'G1', grade: 'G1' };
-  if (s.includes('G2') || s.includes('Ｇ2') || s.includes('ＧＩＩ')) return { className: 'G2', grade: 'G2' };
-  if (s.includes('G3') || s.includes('Ｇ3') || s.includes('ＧＩＩＩ')) return { className: 'G3', grade: 'G3' };
-  if (s.includes('OP') || s.includes('ＯＰ') || s.includes('オープン')) return { className: 'OP(L)', grade: 'OP' };
-  if (s.includes('重賞')) return { className: '重賞', grade: undefined };
-  if (s.includes('新馬')) return { className: '新馬', grade: undefined };
-  if (s.includes('未勝利')) return { className: '未勝利', grade: undefined };
-  if (s.includes('1勝')) return { className: '1勝', grade: undefined };
-  if (s.includes('2勝')) return { className: '2勝', grade: undefined };
-  if (s.includes('3勝')) return { className: '3勝', grade: undefined };
+  if (s.includes('G1') || s.includes('・ｧ1') || s.includes('・ｧ・ｩ')) return { className: 'G1', grade: 'G1' };
+  if (s.includes('G2') || s.includes('・ｧ2') || s.includes('・ｧ・ｩ・ｩ')) return { className: 'G2', grade: 'G2' };
+  if (s.includes('G3') || s.includes('・ｧ3') || s.includes('・ｧ・ｩ・ｩ・ｩ')) return { className: 'G3', grade: 'G3' };
+  if (s.includes('OP') || s.includes('・ｯ・ｰ') || s.includes('繧ｪ繝ｼ繝励Φ')) return { className: 'OP(L)', grade: 'OP' };
+  if (s.includes('驥崎ｳ・)) return { className: '驥崎ｳ・, grade: undefined };
+  if (s.includes('譁ｰ鬥ｬ')) return { className: '譁ｰ鬥ｬ', grade: undefined };
+  if (s.includes('譛ｪ蜍晏茜')) return { className: '譛ｪ蜍晏茜', grade: undefined };
+  if (s.includes('1蜍・)) return { className: '1蜍・, grade: undefined };
+  if (s.includes('2蜍・)) return { className: '2蜍・, grade: undefined };
+  if (s.includes('3蜍・)) return { className: '3蜍・, grade: undefined };
   return {};
 }
 
@@ -381,7 +378,7 @@ function normalizeOffAt(input?: string): string | undefined {
     const mm = m[2];
     return `${hh}:${mm}`;
   }
-  // 例: 1640 → 16:40
+  // 萓・ 1640 竊・16:40
   const digits = s.replace(/[^0-9]/g, '');
   if (digits.length === 4) {
     return `${digits.slice(0,2)}:${digits.slice(2)}`;
@@ -394,33 +391,33 @@ function classNameSynonyms(input: string): string[] {
   const syn = new Set<string>();
   if (!s) return [];
 
-  if (s.includes('1勝')) {
-    ['1勝','1勝クラス','1勝ｸﾗｽ','１勝','１勝クラス','１勝ｸﾗｽ'].forEach(v => syn.add(v));
-  } else if (s.includes('2勝')) {
-    ['2勝','2勝クラス','2勝ｸﾗｽ','２勝','２勝クラス','２勝ｸﾗｽ'].forEach(v => syn.add(v));
-  } else if (s.includes('3勝')) {
-    ['3勝','3勝クラス','3勝ｸﾗｽ','３勝','３勝クラス','３勝ｸﾗｽ'].forEach(v => syn.add(v));
-  } else if (/G\s*1|Ｇ\s*1/i.test(s) || s.toUpperCase()==='G1') {
-    ['G1','Ｇ1','ＧＩ'].forEach(v => syn.add(v));
-  } else if (/G\s*2|Ｇ\s*2/i.test(s) || s.toUpperCase()==='G2') {
-    ['G2','Ｇ2','ＧＩＩ'].forEach(v => syn.add(v));
-  } else if (/G\s*3|Ｇ\s*3/i.test(s) || s.toUpperCase()==='G3') {
-    ['G3','Ｇ3','ＧＩＩＩ'].forEach(v => syn.add(v));
-  } else if (s.includes('OP') || s.includes('ＯＰ') || s.includes('オープン')) {
-    ['OP(L)','OP','ＯＰ','オープン'].forEach(v => syn.add(v));
-  } else if (s.includes('重賞')) {
-    ['G1','G2','G3','重賞'].forEach(v => syn.add(v));
-  } else if (s.includes('新馬')) {
-    ['新馬'].forEach(v => syn.add(v));
-  } else if (s.includes('未勝利')) {
-    ['未勝利'].forEach(v => syn.add(v));
+  if (s.includes('1蜍・)) {
+    ['1蜍・,'1蜍昴け繝ｩ繧ｹ','1蜍晢ｽｸ・暦ｽｽ','・大享','・大享繧ｯ繝ｩ繧ｹ','・大享・ｸ・暦ｽｽ'].forEach(v => syn.add(v));
+  } else if (s.includes('2蜍・)) {
+    ['2蜍・,'2蜍昴け繝ｩ繧ｹ','2蜍晢ｽｸ・暦ｽｽ','・貞享','・貞享繧ｯ繝ｩ繧ｹ','・貞享・ｸ・暦ｽｽ'].forEach(v => syn.add(v));
+  } else if (s.includes('3蜍・)) {
+    ['3蜍・,'3蜍昴け繝ｩ繧ｹ','3蜍晢ｽｸ・暦ｽｽ','・灘享','・灘享繧ｯ繝ｩ繧ｹ','・灘享・ｸ・暦ｽｽ'].forEach(v => syn.add(v));
+  } else if (/G\s*1|・ｧ\s*1/i.test(s) || s.toUpperCase()==='G1') {
+    ['G1','・ｧ1','・ｧ・ｩ'].forEach(v => syn.add(v));
+  } else if (/G\s*2|・ｧ\s*2/i.test(s) || s.toUpperCase()==='G2') {
+    ['G2','・ｧ2','・ｧ・ｩ・ｩ'].forEach(v => syn.add(v));
+  } else if (/G\s*3|・ｧ\s*3/i.test(s) || s.toUpperCase()==='G3') {
+    ['G3','・ｧ3','・ｧ・ｩ・ｩ・ｩ'].forEach(v => syn.add(v));
+  } else if (s.includes('OP') || s.includes('・ｯ・ｰ') || s.includes('繧ｪ繝ｼ繝励Φ')) {
+    ['OP(L)','OP','・ｯ・ｰ','繧ｪ繝ｼ繝励Φ'].forEach(v => syn.add(v));
+  } else if (s.includes('驥崎ｳ・)) {
+    ['G1','G2','G3','驥崎ｳ・].forEach(v => syn.add(v));
+  } else if (s.includes('譁ｰ鬥ｬ')) {
+    ['譁ｰ鬥ｬ'].forEach(v => syn.add(v));
+  } else if (s.includes('譛ｪ蜍晏茜')) {
+    ['譛ｪ蜍晏茜'].forEach(v => syn.add(v));
   } else {
     syn.add(s);
   }
   return Array.from(syn);
 }
 
-// 馬データのCRUD操作
+// 鬥ｬ繝・・繧ｿ縺ｮCRUD謫堺ｽ・
 app.get('/api/horses', async (c) => {
   const db = createDb(c.env.DB);
   const allHorses = await db.select().from(horses);
@@ -432,7 +429,7 @@ app.post('/api/horses', async (c) => {
     const db = createDb(c.env.DB);
     const horsesData: NewHorse[] = await c.req.json();
     
-    // UPSERT: 既存データがあれば更新、なければ挿入
+    // UPSERT: 譌｢蟄倥ョ繝ｼ繧ｿ縺後≠繧後・譖ｴ譁ｰ縲√↑縺代ｌ縺ｰ謖ｿ蜈･
     for (const horseData of horsesData) {
       await db.insert(horses)
         .values({
@@ -458,10 +455,10 @@ app.post('/api/horses', async (c) => {
         });
     }
     
-    return c.json({ message: `${horsesData.length}件の馬データを処理しました` });
+    return c.json({ message: `${horsesData.length}莉ｶ縺ｮ鬥ｬ繝・・繧ｿ繧貞・逅・＠縺ｾ縺励◆` });
   } catch (error) {
     console.error('Error upserting horses:', error);
-    return c.json({ error: '馬データの処理に失敗しました' }, 500);
+    return c.json({ error: '鬥ｬ繝・・繧ｿ縺ｮ蜃ｦ逅・↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
@@ -471,13 +468,13 @@ app.get('/api/horses/:id', async (c) => {
   const horse = await db.select().from(horses).where(eq(horses.id, id)).get();
   
   if (!horse) {
-    return c.json({ error: '馬が見つかりません' }, 404);
+    return c.json({ error: '鬥ｬ縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ' }, 404);
   }
   
   return c.json(horse);
 });
 
-// レースデータのCRUD操作
+// 繝ｬ繝ｼ繧ｹ繝・・繧ｿ縺ｮCRUD謫堺ｽ・
 app.get('/api/races', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -485,21 +482,21 @@ app.get('/api/races', async (c) => {
 
 
     if (date) {
-      // 日付パラメータがある場合は、YYYY-MM-DD形式をYYYYMMDD形式に変換
+      // 譌･莉倥ヱ繝ｩ繝｡繝ｼ繧ｿ縺後≠繧句ｴ蜷医・縲〆YYY-MM-DD蠖｢蠑上ｒYYYYMMDD蠖｢蠑上↓螟画鋤
       const dateStr = date.replace(/-/g, '');
 
       const filteredRaces = await db.select().from(races).where(eq(races.date, dateStr));
       const enriched = await enrichRaceListWithCushion(db, filteredRaces);
       return c.json(enriched);
     } else {
-      // 日付パラメータがない場合は全レースを取得
+      // 譌･莉倥ヱ繝ｩ繝｡繝ｼ繧ｿ縺後↑縺・ｴ蜷医・蜈ｨ繝ｬ繝ｼ繧ｹ繧貞叙蠕・
       const allRaces = await db.select().from(races);
       const enriched = await enrichRaceListWithCushion(db, allRaces);
       return c.json(enriched);
     }
   } catch (error) {
     console.error('Error fetching races:', error);
-    return c.json({ error: 'レース情報の取得に失敗しました' }, 500);
+    return c.json({ error: '繝ｬ繝ｼ繧ｹ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
@@ -508,7 +505,7 @@ app.post('/api/races', async (c) => {
     const db = createDb(c.env.DB);
     const racesData: NewRace[] = await c.req.json();
     
-    // UPSERT: 既存データがあれば更新、なければ挿入
+    // UPSERT: 譌｢蟄倥ョ繝ｼ繧ｿ縺後≠繧後・譖ｴ譁ｰ縲√↑縺代ｌ縺ｰ謖ｿ蜈･
     for (const raceData of racesData) {
       await db.insert(races)
         .values({
@@ -541,14 +538,14 @@ app.post('/api/races', async (c) => {
         });
     }
     
-    return c.json({ message: `${racesData.length}件のレースデータを処理しました` });
+    return c.json({ message: `${racesData.length}莉ｶ縺ｮ繝ｬ繝ｼ繧ｹ繝・・繧ｿ繧貞・逅・＠縺ｾ縺励◆` });
   } catch (error) {
     console.error('Error upserting races:', error);
-    return c.json({ error: 'レースデータの処理に失敗しました' }, 500);
+    return c.json({ error: '繝ｬ繝ｼ繧ｹ繝・・繧ｿ縺ｮ蜃ｦ逅・↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// レース結果のCRUD操作（馬名付き）
+// 繝ｬ繝ｼ繧ｹ邨先棡縺ｮCRUD謫堺ｽ懶ｼ磯ｦｬ蜷堺ｻ倥″・・
 app.get('/api/race-results', async (c) => {
   const db = createDb(c.env.DB);
   const raceId = c.req.query('raceId');
@@ -557,14 +554,14 @@ app.get('/api/race-results', async (c) => {
   const beforeDate = c.req.query('beforeDate');
   const limit = limitParam ? parseInt(limitParam) : undefined;
 
-  // 条件組み立て
+  // 譚｡莉ｶ邨・∩遶九※
   const conditions: any[] = [];
   if (raceId) conditions.push(eq(raceResults.raceId, raceId));
   if (horseId) conditions.push(eq(raceResults.horseId, horseId));
-  if (beforeDate) conditions.push(lt(raceResults.date, beforeDate)); // 当日より前のみ
+  if (beforeDate) conditions.push(lt(raceResults.date, beforeDate)); // 蠖捺律繧医ｊ蜑阪・縺ｿ
   const whereClause: any = conditions.length > 0 ? and(...conditions as any) : undefined;
 
-  // 並び替え: 日付降順 → 人気昇順（horsesテーブルとJOINして馬名を取得）
+  // 荳ｦ縺ｳ譖ｿ縺・ 譌･莉倬剄鬆・竊・莠ｺ豌玲・鬆・ｼ・orses繝・・繝悶Ν縺ｨJOIN縺励※鬥ｬ蜷阪ｒ蜿門ｾ暦ｼ・
   const query = db.select({
     id: raceResults.id,
     raceId: raceResults.raceId,
@@ -649,7 +646,7 @@ app.post('/api/race-results', async (c) => {
       }
     }
     
-    // UPSERT: 既存データがあれば更新、なければ挿入
+    // UPSERT: 譌｢蟄倥ョ繝ｼ繧ｿ縺後≠繧後・譖ｴ譁ｰ縲√↑縺代ｌ縺ｰ謖ｿ蜈･
     for (const resultData of resultsData) {
       await db.insert(raceResults)
         .values({
@@ -692,14 +689,14 @@ app.post('/api/race-results', async (c) => {
         });
     }
     
-    return c.json({ message: `${resultsData.length}件のレース結果データを処理しました` });
+    return c.json({ message: `${resultsData.length}莉ｶ縺ｮ繝ｬ繝ｼ繧ｹ邨先棡繝・・繧ｿ繧貞・逅・＠縺ｾ縺励◆` });
   } catch (error) {
     console.error('Error upserting race results:', error);
-    return c.json({ error: 'レース結果データの処理に失敗しました' }, 500);
+    return c.json({ error: '繝ｬ繝ｼ繧ｹ邨先棡繝・・繧ｿ縺ｮ蜃ｦ逅・↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// データベースの中身を確認するためのデバッグエンドポイント
+// 繝・・繧ｿ繝吶・繧ｹ縺ｮ荳ｭ霄ｫ繧堤｢ｺ隱阪☆繧九◆繧√・繝・ヰ繝・げ繧ｨ繝ｳ繝峨・繧､繝ｳ繝・
 app.get('/api/debug/race-results', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -721,16 +718,16 @@ app.get('/api/debug/race-results', async (c) => {
 
     
     return c.json({
-      message: `${results.length}件のレコードを確認しました`,
+      message: `${results.length}莉ｶ縺ｮ繝ｬ繧ｳ繝ｼ繝峨ｒ遒ｺ隱阪＠縺ｾ縺励◆`,
       results: results
     });
   } catch (error) {
     console.error('Error fetching debug data:', error);
-    return c.json({ error: 'デバッグデータの取得に失敗しました' }, 500);
+    return c.json({ error: '繝・ヰ繝・げ繝・・繧ｿ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// racesテーブルのデバッグエンドポイント
+// races繝・・繝悶Ν縺ｮ繝・ヰ繝・げ繧ｨ繝ｳ繝峨・繧､繝ｳ繝・
 app.get('/api/debug/races', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -753,16 +750,16 @@ app.get('/api/debug/races', async (c) => {
 
     
     return c.json({
-      message: `${racesData.length}件のレコードを確認しました`,
+      message: `${racesData.length}莉ｶ縺ｮ繝ｬ繧ｳ繝ｼ繝峨ｒ遒ｺ隱阪＠縺ｾ縺励◆`,
       races: racesData
     });
   } catch (error) {
     console.error('Error fetching debug data:', error);
-    return c.json({ error: 'デバッグデータの取得に失敗しました' }, 500);
+    return c.json({ error: '繝・ヰ繝・げ繝・・繧ｿ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// race-entriesのデバッグエンドポイント
+// race-entries縺ｮ繝・ヰ繝・げ繧ｨ繝ｳ繝峨・繧､繝ｳ繝・
 app.get('/api/debug/race-entries', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -789,12 +786,12 @@ app.get('/api/debug/race-entries', async (c) => {
 
     
     return c.json({
-      message: `${entries.length}件のレコードを確認しました`,
+      message: `${entries.length}莉ｶ縺ｮ繝ｬ繧ｳ繝ｼ繝峨ｒ遒ｺ隱阪＠縺ｾ縺励◆`,
       entries: entries
     });
   } catch (error) {
     console.error('Error fetching debug data:', error);
-    return c.json({ error: 'デバッグデータの取得に失敗しました' }, 500);
+    return c.json({ error: '繝・ヰ繝・げ繝・・繧ｿ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
@@ -838,14 +835,14 @@ app.post('/api/race-results-with-horses', async (c) => {
       }
     }
     
-    // 1. レース情報を抽出して登録（既に登録済みの場合はスキップ）
+    // 1. 繝ｬ繝ｼ繧ｹ諠・ｱ繧呈歓蜃ｺ縺励※逋ｻ骭ｲ・域里縺ｫ逋ｻ骭ｲ貂医∩縺ｮ蝣ｴ蜷医・繧ｹ繧ｭ繝・・・・
     const raceMap = new Map<string, NewRace>();
     
     for (const resultData of resultsData) {
       if (resultData.raceId && !raceMap.has(resultData.raceId)) {
-        // レース結果からレース情報を推定
+        // 繝ｬ繝ｼ繧ｹ邨先棡縺九ｉ繝ｬ繝ｼ繧ｹ諠・ｱ繧呈耳螳・
         const classFromResult = (resultData as any).className || (resultData as any).class || undefined;
-        const offAtFromResult = (resultData as any).offAt || (resultData as any).発走時刻 || undefined;
+        const offAtFromResult = (resultData as any).offAt || (resultData as any).逋ｺ襍ｰ譎ょ綾 || undefined;
         const { className: clsCsv, grade: gradeCsv } = normalizeCsvClass(classFromResult);
         const offAtCsv = normalizeOffAt(offAtFromResult);
 
@@ -862,19 +859,19 @@ app.post('/api/race-results-with-horses', async (c) => {
         const raceData: NewRace = {
           raceId: resultData.raceId,
           date: resultData.date,
-          venue: (resultData as any).venueNormalized || resultData.venue, // 正規化された開催地
+          venue: (resultData as any).venueNormalized || resultData.venue, // 豁｣隕丞喧縺輔ｌ縺滄幕蛯ｬ蝨ｰ
           meetingNumber: (resultData as any).meetingNumber || 1,
           dayNumber: (resultData as any).dayNumber || 1,
           raceNo: (resultData as any).raceNo || 1,
           raceName: resultData.raceName,
-          className: clsCsv || (resultData as any).className || inferClassNameFromRaceName(resultData.raceName) || '未勝利',
+          className: clsCsv || (resultData as any).className || inferClassNameFromRaceName(resultData.raceName) || '譛ｪ蜍晏茜',
           surface: resultData.courseType,
           distance: resultData.distance,
           direction: raceDirection,
           trackCond: resultData.courseCondition,
           fieldSize: (resultData as any).fieldSize,
           win5: false,
-          status: '確定',
+          status: '遒ｺ螳・,
           offAt: offAtCsv,
           grade: gradeCsv,
         };
@@ -882,7 +879,7 @@ app.post('/api/race-results-with-horses', async (c) => {
       }
     }
     
-    // レースデータをUPSERT
+    // 繝ｬ繝ｼ繧ｹ繝・・繧ｿ繧旦PSERT
     for (const raceData of raceMap.values()) {
       await db.insert(races)
         .values({
@@ -913,33 +910,33 @@ app.post('/api/race-results-with-horses', async (c) => {
         });
     }
     
-    // 2. 馬の基本情報を抽出して登録（既に登録済みの場合はスキップ）
+    // 2. 鬥ｬ縺ｮ蝓ｺ譛ｬ諠・ｱ繧呈歓蜃ｺ縺励※逋ｻ骭ｲ・域里縺ｫ逋ｻ骭ｲ貂医∩縺ｮ蝣ｴ蜷医・繧ｹ繧ｭ繝・・・・
     const horseMap = new Map<string, NewHorse>();
     
   for (const resultData of resultsData) {
       if (resultData.horseId && !horseMap.has(resultData.horseId)) {
-        // レース結果から馬の基本情報を推定
+        // 繝ｬ繝ｼ繧ｹ邨先棡縺九ｉ鬥ｬ縺ｮ蝓ｺ譛ｬ諠・ｱ繧呈耳螳・
         const horseData: NewHorse = {
           id: resultData.horseId,
-          name: (resultData as any).horseName || resultData.raceName.split('・')[1] || resultData.raceName, // 馬名を優先
+          name: (resultData as any).horseName || resultData.raceName.split('繝ｻ')[1] || resultData.raceName, // 鬥ｬ蜷阪ｒ蜆ｪ蜈・
           birthDate: (resultData as any).horseBirthDate || ((resultData as any).horseAge ? 
             `${new Date(resultData.date).getFullYear() - parseInt((resultData as any).horseAge) + 1}0101`.padStart(8, '0') : 
-            `${new Date(resultData.date).getFullYear() - 2}0101`.padStart(8, '0')), // 年齢から生年を計算
-          sex: (resultData as any).horseSex || '牝', // 性別を優先
+            `${new Date(resultData.date).getFullYear() - 2}0101`.padStart(8, '0')), // 蟷ｴ鮨｢縺九ｉ逕溷ｹｴ繧定ｨ育ｮ・
+          sex: (resultData as any).horseSex || '迚・, // 諤ｧ蛻･繧貞━蜈・
           color: '',
           father: (resultData as any).horseFather || '',
           mother: (resultData as any).horseMother || '',
           maternalGrandfather: (resultData as any).horseMaternalGrandfather || '',
-          trainer: (resultData as any).horseTrainer || resultData.jockey || '', // 調教師を優先
+          trainer: (resultData as any).horseTrainer || resultData.jockey || '', // 隱ｿ謨吝ｸｫ繧貞━蜈・
           owner: (resultData as any).horseOwner || '',
           breeder: (resultData as any).horseBreeder || '',
-          earnings: (resultData as any).horseEarnings || 0, // 賞金を優先
+          earnings: (resultData as any).horseEarnings || 0, // 雉樣≡繧貞━蜈・
         };
         horseMap.set(resultData.horseId, horseData);
       }
     }
     
-    // 馬データをUPSERT
+    // 鬥ｬ繝・・繧ｿ繧旦PSERT
     for (const horseData of horseMap.values()) {
       await db.insert(horses)
         .values({
@@ -965,7 +962,7 @@ app.post('/api/race-results-with-horses', async (c) => {
     });
     }
     
-    // 3. 出馬表データを既存レコードに対してのみ更新
+    // 3. 蜃ｺ鬥ｬ陦ｨ繝・・繧ｿ繧呈里蟄倥Ξ繧ｳ繝ｼ繝峨↓蟇ｾ縺励※縺ｮ縺ｿ譖ｴ譁ｰ
     for (const resultData of resultsData) {
       const existing = await db
         .select({ id: raceEntries.id })
@@ -990,7 +987,7 @@ app.post('/api/race-results-with-horses', async (c) => {
       }
     }
 
-    // 4. レース結果をUPSERT
+    // 4. 繝ｬ繝ｼ繧ｹ邨先棡繧旦PSERT
     for (const resultData of resultsData) {
       await db.insert(raceResults)
         .values({
@@ -1028,7 +1025,7 @@ app.post('/api/race-results-with-horses', async (c) => {
             minusThreeFurlongAvgSpeed: (resultData as any).minusThreeFurlongAvgSpeed,
             odds: resultData.odds,
             popularity: resultData.popularity,
-            // 賞金情報
+            // 雉樣≡諠・ｱ
             prizeMoney: (resultData as any).prizeMoney || null,
             earnedMoney: (resultData as any).earnedMoney || null,
             updatedAt: sql`CURRENT_TIMESTAMP`
@@ -1037,15 +1034,15 @@ app.post('/api/race-results-with-horses', async (c) => {
     }
     
     return c.json({ 
-      message: `${raceMap.size}件のレースデータ、${horseMap.size}件の馬データ、${resultsData.length}件のレース結果データを処理しました` 
+      message: `${raceMap.size}莉ｶ縺ｮ繝ｬ繝ｼ繧ｹ繝・・繧ｿ縲・{horseMap.size}莉ｶ縺ｮ鬥ｬ繝・・繧ｿ縲・{resultsData.length}莉ｶ縺ｮ繝ｬ繝ｼ繧ｹ邨先棡繝・・繧ｿ繧貞・逅・＠縺ｾ縺励◆` 
     });
   } catch (error) {
     console.error('Error upserting race results with horses:', error);
-    return c.json({ error: 'レース結果と馬データの処理に失敗しました' }, 500);
+    return c.json({ error: '繝ｬ繝ｼ繧ｹ邨先棡縺ｨ鬥ｬ繝・・繧ｿ縺ｮ蜃ｦ逅・↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 馬のレース結果を取得
+// 鬥ｬ縺ｮ繝ｬ繝ｼ繧ｹ邨先棡繧貞叙蠕・
 app.get('/api/horses/:id/results', async (c) => {
   const db = createDb(c.env.DB);
   const id = c.req.param('id');
@@ -1053,13 +1050,13 @@ app.get('/api/horses/:id/results', async (c) => {
   return c.json(results);
 });
 
-// 出馬表のCRUD操作
+// 蜃ｺ鬥ｬ陦ｨ縺ｮCRUD謫堺ｽ・
 app.post('/api/race-entries', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const entriesData: NewRaceEntry[] = await c.req.json();
     
-    // INSERT（1件ずつ）+ 詳細ログ
+    // INSERT・・莉ｶ縺壹▽・・ 隧ｳ邏ｰ繝ｭ繧ｰ
     for (const e of entriesData) {
       try {
         await db.insert(raceEntries)
@@ -1087,37 +1084,193 @@ app.post('/api/race-entries', async (c) => {
       }
     }
 
-    return c.json({ message: `${entriesData.length}件の出馬表データを処理しました` });
+    return c.json({ message: `${entriesData.length}莉ｶ縺ｮ蜃ｺ鬥ｬ陦ｨ繝・・繧ｿ繧貞・逅・＠縺ｾ縺励◆` });
   } catch (error) {
     console.error('Error inserting race entries:', error);
-    return c.json({ error: '出馬表データの追加に失敗しました' }, 500);
+    return c.json({ error: '蜃ｺ鬥ｬ陦ｨ繝・・繧ｿ縺ｮ霑ｽ蜉縺ｫ螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 出馬表CSVアップロード用エンドポイント
+// 蜃ｺ鬥ｬ陦ｨCSV繧｢繝・・繝ｭ繝ｼ繝臥畑繧ｨ繝ｳ繝峨・繧､繝ｳ繝・
+// 馬場サマリーを日次で手動登録するエンドポイント
+app.post('/api/track-condition-daily-summaries', async (c) => {
+  try {
+    const body = await c.req.json();
+    const rowsInput = Array.isArray(body?.csvData)
+      ? body.csvData
+      : Array.isArray(body?.summaries)
+        ? body.summaries
+        : null;
+
+    if (!rowsInput || rowsInput.length === 0) {
+      return c.json({ error: '馬場サマリーデータが空です' }, 400);
+    }
+
+    const defaultSourceFile = typeof body?.sourceFile === 'string' ? body.sourceFile.trim() : '';
+
+    const toNullableFloat = (value: unknown): number | null => {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      const normalized = String(value).trim();
+      if (!normalized) return null;
+      const replaced = normalized.replace(/[^0-9.\-]/g, '');
+      if (!replaced) return null;
+      const num = parseFloat(replaced);
+      return Number.isFinite(num) ? num : null;
+    };
+
+    const extractMeetingNumber = (value: unknown): number | null => {
+      if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+      const str = String(value ?? '').trim();
+      if (!str) return null;
+      const digits = str.replace(/[^0-9]/g, '');
+      if (!digits) return null;
+      const num = parseInt(digits, 10);
+      return Number.isFinite(num) ? num : null;
+    };
+
+    const errors: string[] = [];
+    const preparedRows: Array<Omit<NewTrackConditionDailySummary, 'id' | 'createdAt' | 'updatedAt'> & { sourceFile: string | null }> = [];
+
+    rowsInput.forEach((rawRow: any, index: number) => {
+      const rowNumber = index + 1;
+      const venueRaw = String(rawRow?.venue ?? rawRow?.場所 ?? '').trim();
+      if (!venueRaw) {
+        errors.push(${rowNumber}行目: venue が空です);
+        return;
+      }
+
+      const venueCandidates = buildVenueCandidates(venueRaw);
+      const venue = venueCandidates.find(v => v.endsWith('競馬場')) ?? venueCandidates[0] ?? venueRaw;
+
+      const meetingLabelRaw = String(rawRow?.meeting ?? rawRow?.meeting_label ?? '').trim();
+      if (!meetingLabelRaw) {
+        errors.push(${rowNumber}行目: meeting が空です);
+        return;
+      }
+      const meetingNumber = extractMeetingNumber(rawRow?.meeting_number ?? meetingLabelRaw);
+
+      const dateRaw = rawRow?.measurementDate ?? rawRow?.measurement_date ?? rawRow?.date ?? rawRow?.日付 ?? '';
+      const isoDate = normalizeDateToISO(String(dateRaw));
+      if (!isoDate) {
+        errors.push(${rowNumber}行目: date が有効な形式ではありません);
+        return;
+      }
+
+      const dayOfWeek = String(rawRow?.weekday ?? rawRow?.day_of_week ?? '').trim() || null;
+
+      const turfGoal = toNullableFloat(rawRow?.turf_goal_percent ?? rawRow?.turfGoalPercent);
+      const turfCorner = toNullableFloat(rawRow?.turf_corner_percent ?? rawRow?.turfCornerPercent);
+      const dirtGoal = toNullableFloat(rawRow?.dirt_goal_percent ?? rawRow?.dirtGoalPercent);
+      const dirtCorner = toNullableFloat(rawRow?.dirt_corner_percent ?? rawRow?.dirtCornerPercent);
+      const cushionValue = toNullableFloat(rawRow?.cushion_value ?? rawRow?.cushionValue);
+
+      const sourceFile = typeof rawRow?.sourceFile === 'string' && rawRow.sourceFile.trim()
+        ? rawRow.sourceFile.trim()
+        : defaultSourceFile || null;
+
+      preparedRows.push({
+        venue,
+        meetingLabel: meetingLabelRaw,
+        meetingNumber,
+        measurementDate: isoDate,
+        dayOfWeek,
+        turfGoalPercent: turfGoal,
+        turfCornerPercent: turfCorner,
+        dirtGoalPercent: dirtGoal,
+        dirtCornerPercent: dirtCorner,
+        cushionValue,
+        sourceFile,
+      });
+    });
+
+    if (errors.length > 0) {
+      return c.json({ error: '入力値に問題があります', details: errors }, 400);
+    }
+
+    const db = createDb(c.env.DB);
+    let inserted = 0;
+    let updated = 0;
+
+    for (const row of preparedRows) {
+      const existing = await db.select({ id: trackConditionDailySummaries.id })
+        .from(trackConditionDailySummaries)
+        .where(and(
+          eq(trackConditionDailySummaries.venue, row.venue),
+          eq(trackConditionDailySummaries.measurementDate, row.measurementDate),
+        ))
+        .limit(1)
+        .get();
+
+      if (existing?.id) {
+        await db.update(trackConditionDailySummaries)
+          .set({
+            meetingLabel: row.meetingLabel,
+            meetingNumber: row.meetingNumber,
+            dayOfWeek: row.dayOfWeek,
+            turfGoalPercent: row.turfGoalPercent,
+            turfCornerPercent: row.turfCornerPercent,
+            dirtGoalPercent: row.dirtGoalPercent,
+            dirtCornerPercent: row.dirtCornerPercent,
+            cushionValue: row.cushionValue,
+            sourceFile: row.sourceFile,
+            updatedAt: sqlCURRENT_TIMESTAMP,
+          })
+          .where(eq(trackConditionDailySummaries.id, existing.id));
+        updated += 1;
+      } else {
+        await db.insert(trackConditionDailySummaries)
+          .values({
+            id: crypto.randomUUID(),
+            venue: row.venue,
+            meetingLabel: row.meetingLabel,
+            meetingNumber: row.meetingNumber,
+            measurementDate: row.measurementDate,
+            dayOfWeek: row.dayOfWeek,
+            turfGoalPercent: row.turfGoalPercent,
+            turfCornerPercent: row.turfCornerPercent,
+            dirtGoalPercent: row.dirtGoalPercent,
+            dirtCornerPercent: row.dirtCornerPercent,
+            cushionValue: row.cushionValue,
+            sourceFile: row.sourceFile,
+          });
+        inserted += 1;
+      }
+    }
+
+    return c.json({
+      message: ${preparedRows.length}件の馬場サマリーを処理しました,
+      inserted,
+      updated,
+    });
+  } catch (error) {
+    console.error('Error inserting track condition daily summaries:', error);
+    return c.json({ error: '馬場サマリーの登録に失敗しました' }, 500);
+  }
+});
 app.post('/api/race-entries-csv', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const { csvData } = await c.req.json();
     
     if (!Array.isArray(csvData) || csvData.length === 0) {
-      return c.json({ error: 'CSVデータが無効です' }, 400);
+      return c.json({ error: 'CSV繝・・繧ｿ縺檎┌蜉ｹ縺ｧ縺・ }, 400);
     }
 
     const entriesData: NewRaceEntry[] = [];
     const horsesData: NewHorse[] = [];
     const racesData: NewRace[] = [];
 
-    // CSVデータを処理
+    // CSV繝・・繧ｿ繧貞・逅・
     for (const row of csvData) {
-      // 日付の正規化
-      let normalizedDate = row['年月日'];
+      // 譌･莉倥・豁｣隕丞喧
+      let normalizedDate = row['蟷ｴ譛域律'];
 
       if (normalizedDate && normalizedDate.length === 6) {
-        // 6桁形式（YYMMDD）を8桁形式（YYYYMMDD）に変換
+        // 6譯∝ｽ｢蠑擾ｼ・YMMDD・峨ｒ8譯∝ｽ｢蠑擾ｼ・YYYMMDD・峨↓螟画鋤
         normalizedDate = `20${normalizedDate}`;
       } else if (normalizedDate && normalizedDate.includes('.')) {
-        // ドット区切り形式（2025. 8.10）を8桁形式に変換
+        // 繝峨ャ繝亥玄蛻・ｊ蠖｢蠑擾ｼ・025. 8.10・峨ｒ8譯∝ｽ｢蠑上↓螟画鋤
         const parts = normalizedDate.replace(/\s+/g, '').split('.');
         if (parts.length >= 3) {
           const year = parts[0];
@@ -1127,9 +1280,9 @@ app.post('/api/race-entries-csv', async (c) => {
         }
       }
       
-      // レースIDの生成（YYYY + 会場2桁 + 開催2桁 + 日次2桁 + R2桁 = 12桁）
-      // 入力CSV: 日付(yyyy.mm.dd) or 年月日, 開催(例: 1札6), R
-      const rawDate = row['年月日'] || row['日付'] || row['日付(yyyy.mm.dd)'] || '';
+      // 繝ｬ繝ｼ繧ｹID縺ｮ逕滓・・・YYY + 莨壼ｴ2譯・+ 髢句ぎ2譯・+ 譌･谺｡2譯・+ R2譯・= 12譯・ｼ・
+      // 蜈･蜉佞SV: 譌･莉・yyyy.mm.dd) or 蟷ｴ譛域律, 髢句ぎ(萓・ 1譛ｭ6), R
+      const rawDate = row['蟷ｴ譛域律'] || row['譌･莉・] || row['譌･莉・yyyy.mm.dd)'] || '';
       let date = rawDate;
       if (typeof date === 'string' && date.includes('.')) {
         const parts = date.replace(/\s+/g, '').split('.');
@@ -1141,8 +1294,8 @@ app.post('/api/race-entries-csv', async (c) => {
         }
       }
       const raceNo = row['R'];
-      const venueComposite = row['開催'] || row['場所'] || '';
-      const legacyId = row['レースID'] || '';
+      const venueComposite = row['髢句ぎ'] || row['蝣ｴ謇'] || '';
+      const legacyId = row['繝ｬ繝ｼ繧ｹID'] || '';
 
       const { parseFromVenueField, normalizeVenueName } = await import('./utils/raceId');
       const mdLegacy = parseMeetingDayFromLegacy(String(legacyId));
@@ -1159,16 +1312,16 @@ app.post('/api/race-entries-csv', async (c) => {
         day
       });
       
-      // 馬IDの生成（血統登録番号の頭に20を追加）
-      const horseId = `20${row['血統登録番号']}`;
+      // 鬥ｬID縺ｮ逕滓・・郁｡邨ｱ逋ｻ骭ｲ逡ｪ蜿ｷ縺ｮ鬆ｭ縺ｫ20繧定ｿｽ蜉・・
+      const horseId = `20${row['陦邨ｱ逋ｻ骭ｲ逡ｪ蜿ｷ']}`;
       
-      // レース情報の作成
-      const csvClassRaw = row['クラス名'] || row['クラス'] || '';
+      // 繝ｬ繝ｼ繧ｹ諠・ｱ縺ｮ菴懈・
+      const csvClassRaw = row['繧ｯ繝ｩ繧ｹ蜷・] || row['繧ｯ繝ｩ繧ｹ'] || '';
       const { className: clsCsv, grade: gradeCsv } = normalizeCsvClass(csvClassRaw);
-      const offAtCsv = normalizeOffAt(row['発走時刻'] || row['発走'] || row['発走時間']);
+      const offAtCsv = normalizeOffAt(row['逋ｺ襍ｰ譎ょ綾'] || row['逋ｺ襍ｰ'] || row['逋ｺ襍ｰ譎る俣']);
 
       const distanceValue = (() => {
-        const d = String(row['距離'] || '').replace(/[^0-9]/g, '');
+        const d = String(row['霍晞屬'] || '').replace(/[^0-9]/g, '');
         return d ? parseInt(d) : 0;
       })();
 
@@ -1181,86 +1334,86 @@ app.post('/api/race-entries-csv', async (c) => {
       const raceData: NewRace = {
         raceId: raceId,
         date: normalizedDate,
-        venue: venuePlace, // 正式名称で保存（例: 福島）
+        venue: venuePlace, // 豁｣蠑丞錐遘ｰ縺ｧ菫晏ｭ假ｼ井ｾ・ 遖丞ｳｶ・・
         meetingNumber: parseInt(String(meeting)),
         dayNumber: parseInt(String(day)),
         raceNo: parseInt(row['R']),
-        raceName: row['レース名'],
-        className: clsCsv || inferClassNameFromRaceName(row['レース名']) || '未勝利',
+        raceName: row['繝ｬ繝ｼ繧ｹ蜷・],
+        className: clsCsv || inferClassNameFromRaceName(row['繝ｬ繝ｼ繧ｹ蜷・]) || '譛ｪ蜍晏茜',
         surface: (() => {
-          const sd = row['芝・ダ'];
-          if (sd === '芝') return '芝';
-          if (sd === 'ダート' || sd === 'ダ') return 'ダート';
-          const distStr = String(row['距離'] || '');
-          if (/^芝/.test(distStr)) return '芝';
-          if (/^ダ/.test(distStr)) return 'ダート';
-          return 'ダート';
+          const sd = row['闃昴・繝'];
+          if (sd === '闃・) return '闃・;
+          if (sd === '繝繝ｼ繝・ || sd === '繝') return '繝繝ｼ繝・;
+          const distStr = String(row['霍晞屬'] || '');
+          if (/^闃・.test(distStr)) return '闃・;
+          if (/^繝/.test(distStr)) return '繝繝ｼ繝・;
+          return '繝繝ｼ繝・;
         })(),
         distance: distanceValue,
         direction: directionValue,
-        trackCond: '良', // デフォルト値
-        fieldSize: parseInt(row['頭数']) || 0,
+        trackCond: '濶ｯ', // 繝・ヵ繧ｩ繝ｫ繝亥､
+        fieldSize: parseInt(row['鬆ｭ謨ｰ']) || 0,
         win5: false,
-        status: '発売中',
+        status: '逋ｺ螢ｲ荳ｭ',
         offAt: offAtCsv,
         grade: gradeCsv,
       };
       
-      // 馬の基本情報の作成
+      // 鬥ｬ縺ｮ蝓ｺ譛ｬ諠・ｱ縺ｮ菴懈・
       const horseData: NewHorse = {
         id: horseId,
-        name: row['馬名'],
-        birthDate: `${new Date().getFullYear() - parseInt(row['年齢']) + 1}0101`, // 年齢から生年を推定
-        sex: row['性別'],
-        color: row['毛色'] || '',
-        father: row['種牡馬'] || '',
-        mother: row['母'] || '',
-        maternalGrandfather: row['母父馬'] || row['母父'] || '',
-        trainer: row['調教師'] || '',
-        owner: row['馬主'] || '',
-        breeder: row['生産者'] || '',
+        name: row['鬥ｬ蜷・],
+        birthDate: `${new Date().getFullYear() - parseInt(row['蟷ｴ鮨｢']) + 1}0101`, // 蟷ｴ鮨｢縺九ｉ逕溷ｹｴ繧呈耳螳・
+        sex: row['諤ｧ蛻･'],
+        color: row['豈幄牡'] || '',
+        father: row['遞ｮ迚｡鬥ｬ'] || '',
+        mother: row['豈・] || '',
+        maternalGrandfather: row['豈咲宛鬥ｬ'] || row['豈咲宛'] || '',
+        trainer: row['隱ｿ謨吝ｸｫ'] || '',
+        owner: row['鬥ｬ荳ｻ'] || '',
+        breeder: row['逕溽肇閠・] || '',
         earnings: 0,
       };
       
-      // 出馬表情報の作成
+      // 蜃ｺ鬥ｬ陦ｨ諠・ｱ縺ｮ菴懈・
       const entryData: NewRaceEntry = {
         raceId: raceId,
         horseId: horseId,
         date: normalizedDate,
-        frameNo: parseInt(row['枠']) || 0,
-        horseNo: parseInt(row['馬番']) || 0,
-        age: parseInt(row['年齢']) || 0,
-        jockey: row['騎手'] || '',
-        weight: parseFloat(row['斤量']) || 0,
-        trainer: row['調教師'] || '',
-        affiliation: row['所属'] || '',
-        popularity: parseInt(row['本人気']) || 0,
+        frameNo: parseInt(row['譫']) || 0,
+        horseNo: parseInt(row['鬥ｬ逡ｪ']) || 0,
+        age: parseInt(row['蟷ｴ鮨｢']) || 0,
+        jockey: row['鬨取焔'] || '',
+        weight: parseFloat(row['譁､驥・]) || 0,
+        trainer: row['隱ｿ謨吝ｸｫ'] || '',
+        affiliation: row['謇螻・] || '',
+        popularity: parseInt(row['譛ｬ莠ｺ豌・]) || 0,
         bodyWeight: 0,
         bodyWeightDiff: 0,
         blinkers: false,
-        // レース基本情報
-        raceName: row['レース名'] || '',
-        surface: (row['芝・ダ'] as '芝' | 'ダート') || '芝',
-        distance: parseInt(row['距離']) || 0,
-        // 馬の基本情報
-        horseName: row['馬名'] || '',
-        sex: (row['性別'] as '牡' | '牝' | 'セ') || '牡',
-        color: row['毛色'] || '',
-        father: row['種牡馬'] || '',
-        mother: row['母'] || '',
-        owner: row['馬主'] || '',
-        breeder: row['生産者'] || '',
-        maternalGrandfather: row['母父馬'] || row['母父'] || '',
-        // レース結果情報
-        previousPopularity: row['前人気'] ? parseInt(row['前人気']) : null,
-        previousFinishPosition: row['前着'] ? parseInt(row['前着']) : null,
-        previousOdds: row['前オッズ'] ? parseFloat(row['前オッズ']) : null,
-        previousFinishOrder: row['前着順'] ? parseInt(row['前着順']) : null,
-        // その他の情報
-        dayNumber: row['日次'] ? parseInt(row['日次']) : null,
-        interval: row['間隔'] ? parseInt(row['間隔']) : null,
-        prizeMoney: row['本賞金'] ? parseInt(row['本賞金']) : null,
-        earnedMoney: row['収得賞金'] ? parseInt(row['収得賞金']) : null
+        // 繝ｬ繝ｼ繧ｹ蝓ｺ譛ｬ諠・ｱ
+        raceName: row['繝ｬ繝ｼ繧ｹ蜷・] || '',
+        surface: (row['闃昴・繝'] as '闃・ | '繝繝ｼ繝・) || '闃・,
+        distance: parseInt(row['霍晞屬']) || 0,
+        // 鬥ｬ縺ｮ蝓ｺ譛ｬ諠・ｱ
+        horseName: row['鬥ｬ蜷・] || '',
+        sex: (row['諤ｧ蛻･'] as '迚｡' | '迚・ | '繧ｻ') || '迚｡',
+        color: row['豈幄牡'] || '',
+        father: row['遞ｮ迚｡鬥ｬ'] || '',
+        mother: row['豈・] || '',
+        owner: row['鬥ｬ荳ｻ'] || '',
+        breeder: row['逕溽肇閠・] || '',
+        maternalGrandfather: row['豈咲宛鬥ｬ'] || row['豈咲宛'] || '',
+        // 繝ｬ繝ｼ繧ｹ邨先棡諠・ｱ
+        previousPopularity: row['蜑堺ｺｺ豌・] ? parseInt(row['蜑堺ｺｺ豌・]) : null,
+        previousFinishPosition: row['蜑咲捩'] ? parseInt(row['蜑咲捩']) : null,
+        previousOdds: row['蜑阪が繝・ぜ'] ? parseFloat(row['蜑阪が繝・ぜ']) : null,
+        previousFinishOrder: row['蜑咲捩鬆・] ? parseInt(row['蜑咲捩鬆・]) : null,
+        // 縺昴・莉悶・諠・ｱ
+        dayNumber: row['譌･谺｡'] ? parseInt(row['譌･谺｡']) : null,
+        interval: row['髢馴囈'] ? parseInt(row['髢馴囈']) : null,
+        prizeMoney: row['譛ｬ雉樣≡'] ? parseInt(row['譛ｬ雉樣≡']) : null,
+        earnedMoney: row['蜿主ｾ苓ｳ樣≡'] ? parseInt(row['蜿主ｾ苓ｳ樣≡']) : null
       };
       
       entriesData.push(entryData);
@@ -1268,7 +1421,7 @@ app.post('/api/race-entries-csv', async (c) => {
       racesData.push(raceData);
     }
 
-    // レースデータをUPSERT
+    // 繝ｬ繝ｼ繧ｹ繝・・繧ｿ繧旦PSERT
     for (const raceData of racesData) {
       await db.insert(races)
         .values({
@@ -1299,7 +1452,7 @@ app.post('/api/race-entries-csv', async (c) => {
         });
     }
 
-    // 馬データをUPSERT
+    // 鬥ｬ繝・・繧ｿ繧旦PSERT
     for (const horseData of horsesData) {
       await db.insert(horses)
         .values({
@@ -1324,7 +1477,7 @@ app.post('/api/race-entries-csv', async (c) => {
         });
     }
 
-    // 出馬表データをUPSERT（重複時は上書き）※ UNIQUE制約なしのため手動UPSERT
+    // 蜃ｺ鬥ｬ陦ｨ繝・・繧ｿ繧旦PSERT・磯㍾隍・凾縺ｯ荳頑嶌縺搾ｼ俄ｻ UNIQUE蛻ｶ邏・↑縺励・縺溘ａ謇句虚UPSERT
     for (const entryData of entriesData) {
       const existing = await db
         .select({ id: raceEntries.id })
@@ -1351,11 +1504,11 @@ app.post('/api/race-entries-csv', async (c) => {
             bodyWeightDiff: entryData.bodyWeightDiff,
             blinkers: entryData.blinkers,
             maternalGrandfather: entryData.maternalGrandfather,
-            // レース基本情報
+            // 繝ｬ繝ｼ繧ｹ蝓ｺ譛ｬ諠・ｱ
             raceName: entryData.raceName,
             surface: entryData.surface,
             distance: entryData.distance,
-            // 馬の基本情報
+            // 鬥ｬ縺ｮ蝓ｺ譛ｬ諠・ｱ
             horseName: entryData.horseName,
             sex: entryData.sex,
             color: entryData.color,
@@ -1363,12 +1516,12 @@ app.post('/api/race-entries-csv', async (c) => {
             mother: entryData.mother,
             owner: entryData.owner,
             breeder: entryData.breeder,
-            // レース結果情報
+            // 繝ｬ繝ｼ繧ｹ邨先棡諠・ｱ
             previousPopularity: entryData.previousPopularity,
             previousFinishPosition: entryData.previousFinishPosition,
             previousOdds: entryData.previousOdds,
             previousFinishOrder: entryData.previousFinishOrder,
-            // その他の情報
+            // 縺昴・莉悶・諠・ｱ
             dayNumber: entryData.dayNumber,
             interval: entryData.interval,
             prizeMoney: entryData.prizeMoney,
@@ -1386,7 +1539,7 @@ app.post('/api/race-entries-csv', async (c) => {
     }
 
     return c.json({ 
-      message: `${entriesData.length}件の出馬表データを処理しました`,
+      message: `${entriesData.length}莉ｶ縺ｮ蜃ｺ鬥ｬ陦ｨ繝・・繧ｿ繧貞・逅・＠縺ｾ縺励◆`,
       processed: {
         races: racesData.length,
         horses: horsesData.length,
@@ -1395,179 +1548,7 @@ app.post('/api/race-entries-csv', async (c) => {
     });
   } catch (error) {
     console.error('Error processing race entries CSV:', error);
-    return c.json({ error: '出馬表CSVデータの処理に失敗しました' }, 500);
-  }
-});
-
-app.post('/api/track-condition-daily-summaries', async (c) => {
-  try {
-    const body = await c.req.json();
-    const rowsInput = Array.isArray(body?.csvData)
-      ? body.csvData
-      : Array.isArray(body?.summaries)
-        ? body.summaries
-        : null;
-
-    if (!rowsInput || rowsInput.length === 0) {
-      return c.json({ error: '馬場サマリーデータが空です' }, 400);
-    }
-
-    const defaultSourceFile = typeof body?.sourceFile === 'string' ? body.sourceFile.trim() : '';
-
-    // 数値として解釈できる文字列を安全に数値へ変換する
-    const toNullableFloat = (value: unknown): number | null => {
-      if (value === null || value === undefined) return null;
-      if (typeof value === 'number' && Number.isFinite(value)) return value;
-      const normalized = String(value).trim();
-      if (!normalized) return null;
-      const replaced = normalized.replace(/[^0-9.\-]/g, '');
-      if (!replaced) return null;
-      const num = parseFloat(replaced);
-      return Number.isFinite(num) ? num : null;
-    };
-
-    const extractMeetingNumber = (value: unknown): number | null => {
-      if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
-      const str = String(value ?? '').trim();
-      if (!str) return null;
-      const digits = str.replace(/[^0-9]/g, '');
-      if (!digits) return null;
-      const num = parseInt(digits, 10);
-      return Number.isFinite(num) ? num : null;
-    };
-
-    const preparedRows: Array<Omit<NewTrackConditionDailySummary, 'id' | 'createdAt' | 'updatedAt'>> = [];
-    const errors: string[] = [];
-
-    rowsInput.forEach((rawRow: any, index: number) => {
-      const rowNumber = index + 1;
-      const venueRaw = String(rawRow?.venue ?? rawRow?.場所 ?? '').trim();
-      if (!venueRaw) {
-        errors.push(`${rowNumber}行目: venue が空です`);
-        return;
-      }
-
-      const venueCandidates = buildVenueCandidates(venueRaw);
-      const venue = venueCandidates.find((v) => v.endsWith('競馬場')) ?? venueCandidates[0] ?? venueRaw;
-
-      const meetingLabelRaw = String(rawRow?.meeting ?? rawRow?.meeting_label ?? rawRow?.開催 ?? '').trim();
-      if (!meetingLabelRaw) {
-        errors.push(`${rowNumber}行目: meeting が空です`);
-        return;
-      }
-      const meetingNumber = extractMeetingNumber(rawRow?.meeting_number ?? meetingLabelRaw);
-
-      const dateRaw = rawRow?.measurementDate
-        ?? rawRow?.measurement_date
-        ?? rawRow?.date
-        ?? rawRow?.日付
-        ?? '';
-      const isoDate = normalizeDateToISO(String(dateRaw));
-      if (!isoDate) {
-        errors.push(`${rowNumber}行目: date が有効な形式ではありません`);
-        return;
-      }
-
-      const dayOfWeek = String(rawRow?.weekday ?? rawRow?.day_of_week ?? rawRow?.曜日 ?? '').trim() || null;
-      const turfGoal = toNullableFloat(rawRow?.turf_goal_percent ?? rawRow?.turfGoalPercent ?? rawRow?.芝ゴール前);
-      const turfCorner = toNullableFloat(rawRow?.turf_corner_percent ?? rawRow?.turfCornerPercent ?? rawRow?.芝4角);
-      const dirtGoal = toNullableFloat(rawRow?.dirt_goal_percent ?? rawRow?.dirtGoalPercent ?? rawRow?.ダートゴール前);
-      const dirtCorner = toNullableFloat(rawRow?.dirt_corner_percent ?? rawRow?.dirtCornerPercent ?? rawRow?.ダート4角);
-      const cushionValue = toNullableFloat(rawRow?.cushion_value ?? rawRow?.cushionValue ?? rawRow?.クッション値);
-
-      const sourceFile = typeof rawRow?.sourceFile === 'string' && rawRow.sourceFile.trim()
-        ? rawRow.sourceFile.trim()
-        : defaultSourceFile || null;
-
-      preparedRows.push({
-        venue,
-        meetingLabel: meetingLabelRaw,
-        meetingNumber,
-        measurementDate: isoDate,
-        dayOfWeek,
-        turfGoalPercent: turfGoal,
-        turfCornerPercent: turfCorner,
-        dirtGoalPercent: dirtGoal,
-        dirtCornerPercent: dirtCorner,
-        cushionValue,
-        sourceFile,
-      });
-    });
-
-    if (errors.length > 0) {
-      return c.json({ error: '入力値に問題があります', details: errors }, 400);
-    }
-
-    const db = createDb(c.env.DB);
-    let inserted = 0;
-    let updated = 0;
-
-    const createSummaryId = (): string => {
-      const maybeCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-      if (maybeCrypto && typeof maybeCrypto.randomUUID === 'function') {
-        return maybeCrypto.randomUUID();
-      }
-      return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    };
-
-    for (const row of preparedRows) {
-      const existing = await db
-        .select({ id: trackConditionDailySummaries.id })
-        .from(trackConditionDailySummaries)
-        .where(
-          and(
-            eq(trackConditionDailySummaries.venue, row.venue),
-            eq(trackConditionDailySummaries.measurementDate, row.measurementDate),
-          ),
-        )
-        .limit(1)
-        .get();
-
-      if (existing?.id) {
-        await db
-          .update(trackConditionDailySummaries)
-          .set({
-            meetingLabel: row.meetingLabel,
-            meetingNumber: row.meetingNumber,
-            dayOfWeek: row.dayOfWeek,
-            turfGoalPercent: row.turfGoalPercent,
-            turfCornerPercent: row.turfCornerPercent,
-            dirtGoalPercent: row.dirtGoalPercent,
-            dirtCornerPercent: row.dirtCornerPercent,
-            cushionValue: row.cushionValue,
-            sourceFile: row.sourceFile ?? null,
-            updatedAt: sql`CURRENT_TIMESTAMP`,
-          })
-          .where(eq(trackConditionDailySummaries.id, existing.id));
-        updated += 1;
-        continue;
-      }
-
-      await db.insert(trackConditionDailySummaries).values({
-        id: createSummaryId(),
-        venue: row.venue,
-        meetingLabel: row.meetingLabel,
-        meetingNumber: row.meetingNumber,
-        measurementDate: row.measurementDate,
-        dayOfWeek: row.dayOfWeek,
-        turfGoalPercent: row.turfGoalPercent,
-        turfCornerPercent: row.turfCornerPercent,
-        dirtGoalPercent: row.dirtGoalPercent,
-        dirtCornerPercent: row.dirtCornerPercent,
-        cushionValue: row.cushionValue,
-        sourceFile: row.sourceFile ?? null,
-      });
-      inserted += 1;
-    }
-
-    return c.json({
-      message: `${preparedRows.length}件の馬場サマリーを処理しました`,
-      inserted,
-      updated,
-    });
-  } catch (error) {
-    console.error('Error inserting track condition daily summaries:', error);
-    return c.json({ error: '馬場サマリーの登録に失敗しました' }, 500);
+    return c.json({ error: '蜃ｺ鬥ｬ陦ｨCSV繝・・繧ｿ縺ｮ蜃ｦ逅・↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
@@ -1576,7 +1557,7 @@ app.post('/api/training-records', async (c) => {
     const body = await c.req.json();
     const recordsInput = Array.isArray(body?.records) ? body.records : Array.isArray(body?.csvData) ? body.csvData : null;
     if (!recordsInput || recordsInput.length === 0) {
-      return c.json({ error: '調教データが空です' }, 400);
+      return c.json({ error: '隱ｿ謨吶ョ繝ｼ繧ｿ縺檎ｩｺ縺ｧ縺・ }, 400);
     }
 
     const toNullableNumber = (value: unknown): number | null => {
@@ -1608,7 +1589,7 @@ app.post('/api/training-records', async (c) => {
     };
 
     const sanitizeRecord = (record: any): Omit<NewTrainingRecord, 'id' | 'createdAt' | 'updatedAt'> => {
-      const sexValue = record?.sex === '牝' ? '牝' : record?.sex === 'セ' ? 'セ' : '牡';
+      const sexValue = record?.sex === '迚・ ? '迚・ : record?.sex === '繧ｻ' ? '繧ｻ' : '迚｡';
       const ageValue = typeof record?.age === 'number' && Number.isFinite(record.age)
         ? record.age
         : parseInt(String(record?.age ?? '0'), 10) || 0;
@@ -1718,13 +1699,13 @@ app.post('/api/training-records', async (c) => {
     }
 
     return c.json({
-      message: `${sanitizedRecords.length}件の調教データを処理しました`,
+      message: `${sanitizedRecords.length}莉ｶ縺ｮ隱ｿ謨吶ョ繝ｼ繧ｿ繧貞・逅・＠縺ｾ縺励◆`,
       inserted,
       updated
     });
   } catch (error) {
     console.error('Error inserting training records:', error);
-    return c.json({ error: '調教データの登録に失敗しました' }, 500);
+    return c.json({ error: '隱ｿ謨吶ョ繝ｼ繧ｿ縺ｮ逋ｻ骭ｲ縺ｫ螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
@@ -1793,22 +1774,22 @@ app.post('/api/training-records/search', async (c) => {
     return c.json({ records: grouped });
   } catch (error) {
     console.error('Error fetching training records:', error);
-    return c.json({ error: '調教データの取得に失敗しました' }, 500);
+    return c.json({ error: '隱ｿ謨吶ョ繝ｼ繧ｿ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// レース詳細の取得
+// 繝ｬ繝ｼ繧ｹ隧ｳ邏ｰ縺ｮ蜿門ｾ・
 app.get('/api/races/:raceId', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const raceId = c.req.param('raceId');
     const race = await db.select().from(races).where(eq(races.raceId, raceId)).get();
     if (!race) {
-      return c.json({ error: 'レースが見つかりません' }, 404);
+      return c.json({ error: '繝ｬ繝ｼ繧ｹ縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ' }, 404);
     }
     let cushionValue: number | undefined;
     const surface = normalizeSurface(race.surface);
-    if (surface === '芝') {
+    if (surface === '闃・) {
       if (race.trackConditionId) {
         const trackRow = await db.select({
           id: trackConditions.id,
@@ -1840,11 +1821,11 @@ app.get('/api/races/:raceId', async (c) => {
     });
   } catch (error) {
     console.error('Error getting race:', error);
-    return c.json({ error: 'レース情報の取得に失敗しました' }, 500);
+    return c.json({ error: '繝ｬ繝ｼ繧ｹ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 出馬表の取得（レースID指定）
+// 蜃ｺ鬥ｬ陦ｨ縺ｮ蜿門ｾ暦ｼ医Ξ繝ｼ繧ｹID謖・ｮ夲ｼ・
 app.get('/api/races/:raceId/entries', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -1854,14 +1835,14 @@ app.get('/api/races/:raceId/entries', async (c) => {
     if (entries.length === 0) return c.json([]);
 
     const horseIds = Array.from(new Set(entries.map(e => e.horseId)));
-    // horsesテーブルから必要項目をまとめて取得
+    // horses繝・・繝悶Ν縺九ｉ蠢・ｦ・・岼繧偵∪縺ｨ繧√※蜿門ｾ・
     const horsesRows = await db.select().from(horses).where(inArray(horses.id, horseIds as any));
     const horseMap = new Map(horsesRows.map(h => [h.id, h] as const));
 
-    // race_resultsテーブルから過去の総賞金情報を取得（そのレース以前の累積）
-    const raceDate = entries[0]?.date; // レースの日付を取得
+    // race_results繝・・繝悶Ν縺九ｉ驕主悉縺ｮ邱剰ｳ樣≡諠・ｱ繧貞叙蠕暦ｼ医◎縺ｮ繝ｬ繝ｼ繧ｹ莉･蜑阪・邏ｯ遨搾ｼ・
+    const raceDate = entries[0]?.date; // 繝ｬ繝ｼ繧ｹ縺ｮ譌･莉倥ｒ蜿門ｾ・
     
-    // 仕様: 「各馬の前走まで（当日以前）の累計」を求め、その合計をレースレベルとする
+    // 莉墓ｧ・ 縲悟推鬥ｬ縺ｮ蜑崎ｵｰ縺ｾ縺ｧ・亥ｽ捺律莉･蜑搾ｼ峨・邏ｯ險医阪ｒ豎ゅａ縲√◎縺ｮ蜷郁ｨ医ｒ繝ｬ繝ｼ繧ｹ繝ｬ繝吶Ν縺ｨ縺吶ｋ
     const perHorseTotals = await db.select({
       horseId: raceResults.horseId,
       prize: sql<number>`SUM(${raceResults.prizeMoney})`,
@@ -1878,7 +1859,7 @@ app.get('/api/races/:raceId/entries', async (c) => {
       return {
         ...e,
         horse: horseMap.get(e.horseId) || null,
-        // そのレース全体の過去の総賞金情報を追加
+        // 縺昴・繝ｬ繝ｼ繧ｹ蜈ｨ菴薙・驕主悉縺ｮ邱剰ｳ樣≡諠・ｱ繧定ｿｽ蜉
         prizeMoney: totalPrizeMoney,
         earnedMoney: totalEarnedMoney
       };
@@ -1887,11 +1868,11 @@ app.get('/api/races/:raceId/entries', async (c) => {
     return c.json(enriched);
   } catch (error) {
     console.error('Error getting race entries:', error);
-    return c.json({ error: '出馬表の取得に失敗しました' }, 500);
+    return c.json({ error: '蜃ｺ鬥ｬ陦ｨ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 出馬表＋各馬の直近レース結果をまとめて取得
+// 蜃ｺ鬥ｬ陦ｨ・句推鬥ｬ縺ｮ逶ｴ霑代Ξ繝ｼ繧ｹ邨先棡繧偵∪縺ｨ繧√※蜿門ｾ・
 app.get('/api/races/:raceId/entries-with-history', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -1957,7 +1938,7 @@ app.get('/api/races/:raceId/entries-with-history', async (c) => {
           const rowsWithCushion = await Promise.all(rows.map(async (row) => {
             let cushionValue: number | undefined;
             const courseSurface = normalizeSurface(row.courseType);
-            if (courseSurface === '芝') {
+            if (courseSurface === '闃・) {
               const rawValue = row.trackConditionId ? trackConditionMap.get(row.trackConditionId) : undefined;
               if (typeof rawValue === 'number') {
                 cushionValue = rawValue;
@@ -1996,18 +1977,18 @@ app.get('/api/races/:raceId/entries-with-history', async (c) => {
     return c.json({ raceId, raceDate, entries: enriched });
   } catch (error) {
     console.error('Error getting race entries with history:', error);
-    return c.json({ error: '出馬表＋直近結果の取得に失敗しました' }, 500);
+    return c.json({ error: '蜃ｺ鬥ｬ陦ｨ・狗峩霑醍ｵ先棡縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 同走馬の次走結果を取得
+// 蜷瑚ｵｰ鬥ｬ縺ｮ谺｡襍ｰ邨先棡繧貞叙蠕・
 app.get('/api/co-runner-next-results/:raceId', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const raceId = c.req.param('raceId');
-    const beforeDate = c.req.query('beforeDate'); // クエリパラメータとして日付フィルタを追加
+    const beforeDate = c.req.query('beforeDate'); // 繧ｯ繧ｨ繝ｪ繝代Λ繝｡繝ｼ繧ｿ縺ｨ縺励※譌･莉倥ヵ繧｣繝ｫ繧ｿ繧定ｿｽ蜉
 
-    // 指定レースの出走馬を取得
+    // 謖・ｮ壹Ξ繝ｼ繧ｹ縺ｮ蜃ｺ襍ｰ鬥ｬ繧貞叙蠕・
     const raceEntries = await db.select()
       .from(raceResults)
       .where(eq(raceResults.raceId, raceId));
@@ -2016,7 +1997,7 @@ app.get('/api/co-runner-next-results/:raceId', async (c) => {
       return c.json({ totalPrevRaceEntries: 0, nextResults: [] });
     }
 
-    // 各馬の次走結果を取得
+    // 蜷・ｦｬ縺ｮ谺｡襍ｰ邨先棡繧貞叙蠕・
     const horseIds = raceEntries.map(entry => entry.horseId).filter(Boolean);
     const raceDate = raceEntries[0]?.date;
 
@@ -2024,7 +2005,7 @@ app.get('/api/co-runner-next-results/:raceId', async (c) => {
       return c.json({ totalPrevRaceEntries: raceEntries.length, nextResults: [] });
     }
 
-    // 各馬の次走結果を取得（指定レース後の最初のレース）
+    // 蜷・ｦｬ縺ｮ谺｡襍ｰ邨先棡繧貞叙蠕暦ｼ域欠螳壹Ξ繝ｼ繧ｹ蠕後・譛蛻昴・繝ｬ繝ｼ繧ｹ・・
     const nextResults = await db.select({
       horseId: raceResults.horseId,
       horseName: horses.name,
@@ -2048,13 +2029,13 @@ app.get('/api/co-runner-next-results/:raceId', async (c) => {
       ))
       .orderBy(raceResults.horseId, raceResults.date);
 
-    // 各馬の最初の次走のみを抽出
+    // 蜷・ｦｬ縺ｮ譛蛻昴・谺｡襍ｰ縺ｮ縺ｿ繧呈歓蜃ｺ
     const firstNextResults = [];
     const seenHorses = new Set();
     for (const result of nextResults) {
       if (!seenHorses.has(result.horseId)) {
         seenHorses.add(result.horseId);
-        // race_nameからクラス情報を抽出
+        // race_name縺九ｉ繧ｯ繝ｩ繧ｹ諠・ｱ繧呈歓蜃ｺ
         const extractedClass = extractClassFromRaceName(result.raceName || '');
         firstNextResults.push({
           ...result,
@@ -2063,7 +2044,7 @@ app.get('/api/co-runner-next-results/:raceId', async (c) => {
       }
     }
 
-    // レスポンスに前走の総出走頭数も含める
+    // 繝ｬ繧ｹ繝昴Φ繧ｹ縺ｫ蜑崎ｵｰ縺ｮ邱丞・襍ｰ鬆ｭ謨ｰ繧ょ性繧√ｋ
     const response = {
       totalPrevRaceEntries: raceEntries.length,
       nextResults: firstNextResults
@@ -2072,11 +2053,11 @@ app.get('/api/co-runner-next-results/:raceId', async (c) => {
     return c.json(response);
   } catch (error) {
     console.error('Error getting co-runner next results:', error);
-    return c.json({ error: '同走馬次走結果の取得に失敗しました' }, 500);
+    return c.json({ error: '蜷瑚ｵｰ鬥ｬ谺｡襍ｰ邨先棡縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 複数レースの基本情報（頭数、賞金合計など）をまとめて取得
+// 隍・焚繝ｬ繝ｼ繧ｹ縺ｮ蝓ｺ譛ｬ諠・ｱ・磯ｭ謨ｰ縲∬ｳ樣≡蜷郁ｨ医↑縺ｩ・峨ｒ縺ｾ縺ｨ繧√※蜿門ｾ・
 app.post('/api/races/batch-basic', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -2143,11 +2124,11 @@ app.post('/api/races/batch-basic', async (c) => {
     return c.json({ races: response });
   } catch (error) {
     console.error('Error getting race basics:', error);
-    return c.json({ error: 'レース基本情報の取得に失敗しました' }, 500);
+    return c.json({ error: '繝ｬ繝ｼ繧ｹ蝓ｺ譛ｬ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 複数レースの同走馬と次走結果をまとめて取得
+// 隍・焚繝ｬ繝ｼ繧ｹ縺ｮ蜷瑚ｵｰ鬥ｬ縺ｨ谺｡襍ｰ邨先棡繧偵∪縺ｨ繧√※蜿門ｾ・
 app.post('/api/races/co-runners/next', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -2265,11 +2246,11 @@ app.post('/api/races/co-runners/next', async (c) => {
     return c.json({ races: responses });
   } catch (error) {
     console.error('Error getting co-runner next results:', error);
-    return c.json({ error: '同走馬の次走情報の取得に失敗しました' }, 500);
+    return c.json({ error: '蜷瑚ｵｰ鬥ｬ縺ｮ谺｡襍ｰ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 複数レースの速度関連指標をまとめて取得
+// 隍・焚繝ｬ繝ｼ繧ｹ縺ｮ騾溷ｺｦ髢｢騾｣謖・ｨ吶ｒ縺ｾ縺ｨ繧√※蜿門ｾ・
 app.post('/api/races/speed-metrics', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -2433,18 +2414,18 @@ app.post('/api/races/speed-metrics', async (c) => {
     return c.json({ races: responses });
   } catch (error) {
     console.error('Error getting speed metrics:', error);
-    return c.json({ error: 'レース速度情報の取得に失敗しました' }, 500);
+    return c.json({ error: '繝ｬ繝ｼ繧ｹ騾溷ｺｦ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// テスト用：賞金情報を手動で更新
+// 繝・せ繝育畑・夊ｳ樣≡諠・ｱ繧呈焔蜍輔〒譖ｴ譁ｰ
 app.patch('/api/races/:raceId/prize-money', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const raceId = c.req.param('raceId');
     const { prizeMoney, earnedMoney } = await c.req.json();
 
-    // 指定されたレースの全てのエントリーを更新
+    // 謖・ｮ壹＆繧後◆繝ｬ繝ｼ繧ｹ縺ｮ蜈ｨ縺ｦ縺ｮ繧ｨ繝ｳ繝医Μ繝ｼ繧呈峩譁ｰ
     await db.update(raceEntries)
       .set({
         prizeMoney: prizeMoney || null,
@@ -2453,30 +2434,30 @@ app.patch('/api/races/:raceId/prize-money', async (c) => {
       })
       .where(eq(raceEntries.raceId, raceId));
 
-    return c.json({ success: true, message: '賞金情報を更新しました' });
+    return c.json({ success: true, message: '雉樣≡諠・ｱ繧呈峩譁ｰ縺励∪縺励◆' });
   } catch (error) {
     console.error('Error updating prize money:', error);
-    return c.json({ error: '賞金情報の更新に失敗しました' }, 500);
+    return c.json({ error: '雉樣≡諠・ｱ縺ｮ譖ｴ譁ｰ縺ｫ螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 分析用API: 距離別過去時間分析
+// 蛻・梵逕ｨAPI: 霍晞屬蛻･驕主悉譎る俣蛻・梵
 app.get('/api/analysis/distance-times', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const { distance, surface, venue, class: className, limit = '50', from, to, winnersOnly } = c.req.query();
     
     if (!distance) {
-      return c.json({ error: '距離パラメータが必要です' }, 400);
+      return c.json({ error: '霍晞屬繝代Λ繝｡繝ｼ繧ｿ縺悟ｿ・ｦ√〒縺・ }, 400);
     }
     
     const limitNum = parseInt(limit);
     
-    // フィルター条件を構築
+    // 繝輔ぅ繝ｫ繧ｿ繝ｼ譚｡莉ｶ繧呈ｧ狗ｯ・
     const conditions = [eq(raceResults.distance, parseInt(distance))];
     
     if (surface && surface !== 'all') {
-      conditions.push(eq(raceResults.courseType, surface as '芝' | 'ダート'));
+      conditions.push(eq(raceResults.courseType, surface as '闃・ | '繝繝ｼ繝・));
     }
     
     if (venue && venue !== 'all') {
@@ -2529,7 +2510,7 @@ app.get('/api/analysis/distance-times', async (c) => {
     
     const results = await query;
     
-    // 統計情報を計算
+    // 邨ｱ險域ュ蝣ｱ繧定ｨ育ｮ・
     const times = results
       .map(r => toSecondsFromRaceTime(r.time as any))
       .filter(t => !isNaN(t) && t > 0);
@@ -2549,27 +2530,27 @@ app.get('/api/analysis/distance-times', async (c) => {
     });
   } catch (error) {
     console.error('Error getting distance times analysis:', error);
-    return c.json({ error: '距離別時間分析の取得に失敗しました' }, 500);
+    return c.json({ error: '霍晞屬蛻･譎る俣蛻・梵縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 分析用API: クラス別分析
+// 蛻・梵逕ｨAPI: 繧ｯ繝ｩ繧ｹ蛻･蛻・梵
 app.get('/api/analysis/class-analysis', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const { className, surface, venue, limit = '50' } = c.req.query();
     
     if (!className) {
-      return c.json({ error: 'クラス名パラメータが必要です' }, 400);
+      return c.json({ error: '繧ｯ繝ｩ繧ｹ蜷阪ヱ繝ｩ繝｡繝ｼ繧ｿ縺悟ｿ・ｦ√〒縺・ }, 400);
     }
     
     const limitNum = parseInt(limit);
     
-    // フィルター条件を構築
+    // 繝輔ぅ繝ｫ繧ｿ繝ｼ譚｡莉ｶ繧呈ｧ狗ｯ・
     const conditions = [eq(races.className, className)];
     
     if (surface && surface !== 'all') {
-      conditions.push(eq(raceResults.courseType, surface as '芝' | 'ダート'));
+      conditions.push(eq(raceResults.courseType, surface as '闃・ | '繝繝ｼ繝・));
     }
     
     if (venue && venue !== 'all') {
@@ -2604,7 +2585,7 @@ app.get('/api/analysis/class-analysis', async (c) => {
     
     const results = await query;
     
-    // 距離別にグループ化
+    // 霍晞屬蛻･縺ｫ繧ｰ繝ｫ繝ｼ繝怜喧
     const byDistance = results.reduce((acc, result) => {
       const distance = result.distance;
       if (!acc[distance]) {
@@ -2614,7 +2595,7 @@ app.get('/api/analysis/class-analysis', async (c) => {
       return acc;
     }, {} as Record<number, typeof results>);
     
-    // 各距離の統計を計算
+    // 蜷・ｷ晞屬縺ｮ邨ｱ險医ｒ險育ｮ・
     const distanceStats = Object.entries(byDistance).map(([distance, races]) => {
       const times = races
         .map(r => toSecondsFromRaceTime(r.time as any))
@@ -2636,19 +2617,19 @@ app.get('/api/analysis/class-analysis', async (c) => {
     });
   } catch (error) {
     console.error('Error getting class analysis:', error);
-    return c.json({ error: 'クラス別分析の取得に失敗しました' }, 500);
+    return c.json({ error: '繧ｯ繝ｩ繧ｹ蛻･蛻・梵縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// レースIDから情報を抽出するヘルパー関数
+// 繝ｬ繝ｼ繧ｹID縺九ｉ諠・ｱ繧呈歓蜃ｺ縺吶ｋ繝倥Ν繝代・髢｢謨ｰ
 function getVenueFromRaceId(raceId: string): string {
   // YYYY(0-3) + venue(4-5) + meeting(6-7) + day(8-9) + R(10-11)
   const venueCode = raceId.substring(4, 6);
   const venueMap: Record<string, string> = {
-    '01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
-    '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉'
+    '01': '譛ｭ蟷・, '02': '蜃ｽ鬢ｨ', '03': '遖丞ｳｶ', '04': '譁ｰ貎・, '05': '譚ｱ莠ｬ',
+    '06': '荳ｭ螻ｱ', '07': '荳ｭ莠ｬ', '08': '莠ｬ驛ｽ', '09': '髦ｪ逾・, '10': '蟆丞・
   };
-  return venueMap[venueCode] || '不明';
+  return venueMap[venueCode] || '荳肴・';
 }
 
 function getMeetingNumberFromRaceId(raceId: string): number {
@@ -2664,30 +2645,30 @@ function getRaceNoFromRaceId(raceId: string): number {
   return raceNo;
 }
 
-// 日付ごとの出馬表情報を取得
+// 譌･莉倥＃縺ｨ縺ｮ蜃ｺ鬥ｬ陦ｨ諠・ｱ繧貞叙蠕・
 app.get('/api/races/entries/by-date/:date', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const date = c.req.param('date');
     
 
-    // 日付形式を統一（データベースは8桁形式で保存されている）
+    // 譌･莉伜ｽ｢蠑上ｒ邨ｱ荳・医ョ繝ｼ繧ｿ繝吶・繧ｹ縺ｯ8譯∝ｽ｢蠑上〒菫晏ｭ倥＆繧後※縺・ｋ・・
     let dateForQuery = date;
-    // 6桁形式（YYMMDD）が来た場合は8桁形式（YYYYMMDD）に変換
+    // 6譯∝ｽ｢蠑擾ｼ・YMMDD・峨′譚･縺溷ｴ蜷医・8譯∝ｽ｢蠑擾ｼ・YYYMMDD・峨↓螟画鋤
     if (dateForQuery.length === 6) {
-      dateForQuery = `20${dateForQuery}`; // 20を先頭に追加
+      dateForQuery = `20${dateForQuery}`; // 20繧貞・鬆ｭ縺ｫ霑ｽ蜉
     }
-    // YYYY-MM-DD形式が来た場合はYYYYMMDD形式に変換
+    // YYYY-MM-DD蠖｢蠑上′譚･縺溷ｴ蜷医・YYYYMMDD蠖｢蠑上↓螟画鋤
     if (dateForQuery.includes('-')) {
       dateForQuery = dateForQuery.replace(/-/g, '');
     }
     
-    // 直接race_entriesテーブルから日付で検索
+    // 逶ｴ謗･race_entries繝・・繝悶Ν縺九ｉ譌･莉倥〒讀懃ｴ｢
     const entries = await db.select().from(raceEntries).where(eq(raceEntries.date, dateForQuery));
     
     if (entries.length === 0) return c.json({});
 
-    // 対象レースの offAt 等を races テーブルから取得してマージ
+    // 蟇ｾ雎｡繝ｬ繝ｼ繧ｹ縺ｮ offAt 遲峨ｒ races 繝・・繝悶Ν縺九ｉ蜿門ｾ励＠縺ｦ繝槭・繧ｸ
     const uniqueRaceIds = Array.from(new Set(entries.map(e => e.raceId)));
     const raceRows = await db.select().from(races).where(inArray(races.raceId, uniqueRaceIds as any));
     const raceMap = new Map(raceRows.map(r => [r.raceId, r] as const));
@@ -2717,13 +2698,13 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
       if (!entriesByRace[entry.raceId]) {
         const raceNo = getRaceNoFromRaceId(entry.raceId);
         const raceRow = raceMap.get(entry.raceId);
-        const surface = normalizeSurface(raceRow?.surface) ?? normalizeSurface(entry.surface) ?? '芝';
+        const surface = normalizeSurface(raceRow?.surface) ?? normalizeSurface(entry.surface) ?? '闃・;
         const trackCondRow = raceRow?.trackConditionId
           ? trackConditionMap.get(raceRow.trackConditionId)
           : undefined;
 
         let cushionValue: number | undefined;
-        if (surface === '芝') {
+        if (surface === '闃・) {
           if (trackCondRow && typeof trackCondRow.cushionValue === 'number') {
             cushionValue = trackCondRow.cushionValue;
           } else {
@@ -2753,17 +2734,17 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
             meetingNumber: raceRow?.meetingNumber ?? getMeetingNumberFromRaceId(entry.raceId),
             dayNumber: raceRow?.dayNumber ?? getDayNumberFromRaceId(entry.raceId),
             raceNo,
-            raceName: raceRow?.raceName ?? entry.raceName ?? `レース${raceNo}`,
-            className: raceRow?.className ?? '未勝利',
+            raceName: raceRow?.raceName ?? entry.raceName ?? `繝ｬ繝ｼ繧ｹ${raceNo}`,
+            className: raceRow?.className ?? '譛ｪ蜍晏茜',
             surface,
             distance: distanceForRaceInfo,
             direction: directionForRaceInfo,
             courseConf: raceRow?.courseConf ?? undefined,
-            trackCond: raceRow?.trackCond ?? '良',
+            trackCond: raceRow?.trackCond ?? '濶ｯ',
             cushionValue,
             offAt: raceRow?.offAt ?? '00:00',
             grade: raceRow?.grade ?? undefined,
-            status: raceRow?.status ?? '発売中',
+            status: raceRow?.status ?? '逋ｺ螢ｲ荳ｭ',
             weather: raceRow?.weather ?? undefined,
             fieldSize: 0,
             win5: raceRow?.win5 ?? undefined,
@@ -2775,9 +2756,9 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
         ...entry,
         horse: {
           id: entry.horseId,
-          name: entry.horseName || '不明',
+          name: entry.horseName || '荳肴・',
           birthDate: '',
-          sex: entry.sex || '牡',
+          sex: entry.sex || '迚｡',
           color: entry.color || '',
           father: entry.father || '',
           mother: entry.mother || '',
@@ -2790,12 +2771,12 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
       entriesByRace[entry.raceId].raceInfo.fieldSize = entriesByRace[entry.raceId].entries.length;
     }
 
-    // 馬番順にソート
+    // 鬥ｬ逡ｪ鬆・↓繧ｽ繝ｼ繝・
     Object.values(entriesByRace).forEach(raceData => {
       raceData.entries.sort((a, b) => a.horseNo - b.horseNo);
     });
 
-    // race_idの順序を保つために、ソートされたオブジェクトを作成
+    // race_id縺ｮ鬆・ｺ上ｒ菫昴▽縺溘ａ縺ｫ縲√た繝ｼ繝医＆繧後◆繧ｪ繝悶ず繧ｧ繧ｯ繝医ｒ菴懈・
     const sortedEntriesByRace: Record<string, { entries: any[], raceInfo: any }> = {};
     const sortedRaceIds = Object.keys(entriesByRace).sort();
     
@@ -2806,11 +2787,11 @@ app.get('/api/races/entries/by-date/:date', async (c) => {
     return c.json(sortedEntriesByRace);
   } catch (error) {
     console.error('Error getting race entries by date:', error);
-    return c.json({ error: '出馬表の取得に失敗しました' }, 500);
+    return c.json({ error: '蜃ｺ鬥ｬ陦ｨ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// レースの部分更新（クッション値など特定フィールドのみ）
+// 繝ｬ繝ｼ繧ｹ縺ｮ驛ｨ蛻・峩譁ｰ・医け繝・す繝ｧ繝ｳ蛟､縺ｪ縺ｩ迚ｹ螳壹ヵ繧｣繝ｼ繝ｫ繝峨・縺ｿ・・
 app.patch('/api/races/:raceId', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -2819,8 +2800,8 @@ app.patch('/api/races/:raceId', async (c) => {
     
     const updateFields: any = { updatedAt: sql`CURRENT_TIMESTAMP` };
     
-    // 送信されたフィールドのみ更新対象に追加
-    // cushionValue は専用エンドポイントで更新するため、ここでは処理しない
+    // 騾∽ｿ｡縺輔ｌ縺溘ヵ繧｣繝ｼ繝ｫ繝峨・縺ｿ譖ｴ譁ｰ蟇ｾ雎｡縺ｫ霑ｽ蜉
+    // cushionValue 縺ｯ蟆ら畑繧ｨ繝ｳ繝峨・繧､繝ｳ繝医〒譖ｴ譁ｰ縺吶ｋ縺溘ａ縲√％縺薙〒縺ｯ蜃ｦ逅・＠縺ｪ縺・
     if (updateData.weather !== undefined) updateFields.weather = updateData.weather;
     if (updateData.trackCond !== undefined) updateFields.trackCond = updateData.trackCond;
     if (updateData.status !== undefined) updateFields.status = updateData.status;
@@ -2830,14 +2811,14 @@ app.patch('/api/races/:raceId', async (c) => {
       .set(updateFields)
       .where(eq(races.raceId, raceId));
     
-    return c.json({ message: `レース ${raceId} を更新しました` });
+    return c.json({ message: `繝ｬ繝ｼ繧ｹ ${raceId} 繧呈峩譁ｰ縺励∪縺励◆` });
   } catch (error) {
     console.error('Error updating race:', error);
-    return c.json({ error: 'レースの更新に失敗しました' }, 500);
+    return c.json({ error: '繝ｬ繝ｼ繧ｹ縺ｮ譖ｴ譁ｰ縺ｫ螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 馬の部分更新（出走予定レースなど特定フィールドのみ）
+// 鬥ｬ縺ｮ驛ｨ蛻・峩譁ｰ・亥・襍ｰ莠亥ｮ壹Ξ繝ｼ繧ｹ縺ｪ縺ｩ迚ｹ螳壹ヵ繧｣繝ｼ繝ｫ繝峨・縺ｿ・・
 app.patch('/api/horses/:horseId', async (c) => {
   try {
     const db = createDb(c.env.DB);
@@ -2846,7 +2827,7 @@ app.patch('/api/horses/:horseId', async (c) => {
     
     const updateFields: any = { updatedAt: sql`CURRENT_TIMESTAMP` };
     
-    // 送信されたフィールドのみ更新対象に追加
+    // 騾∽ｿ｡縺輔ｌ縺溘ヵ繧｣繝ｼ繝ｫ繝峨・縺ｿ譖ｴ譁ｰ蟇ｾ雎｡縺ｫ霑ｽ蜉
     if (updateData.currentRaceId !== undefined) updateFields.currentRaceId = updateData.currentRaceId;
     if (updateData.trainer !== undefined) updateFields.trainer = updateData.trainer;
     if (updateData.owner !== undefined) updateFields.owner = updateData.owner;
@@ -2856,27 +2837,27 @@ app.patch('/api/horses/:horseId', async (c) => {
       .set(updateFields)
       .where(eq(horses.id, horseId));
     
-    return c.json({ message: `馬 ${horseId} を更新しました` });
+    return c.json({ message: `鬥ｬ ${horseId} 繧呈峩譁ｰ縺励∪縺励◆` });
   } catch (error) {
     console.error('Error updating horse:', error);
-    return c.json({ error: '馬の更新に失敗しました' }, 500);
+    return c.json({ error: '鬥ｬ縺ｮ譖ｴ譁ｰ縺ｫ螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// クッション値専用更新エンドポイント
+// 繧ｯ繝・す繝ｧ繝ｳ蛟､蟆ら畑譖ｴ譁ｰ繧ｨ繝ｳ繝峨・繧､繝ｳ繝・
 app.patch('/api/races/:raceId/cushion', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const raceId = c.req.param('raceId');
     const { cushionValue } = await c.req.json();
 
-    // まずレース情報を取得
+    // 縺ｾ縺壹Ξ繝ｼ繧ｹ諠・ｱ繧貞叙蠕・
     const race = await db.select().from(races).where(eq(races.raceId, raceId)).get();
     if (!race) {
-      return c.json({ error: 'レースが見つかりません' }, 404);
+      return c.json({ error: '繝ｬ繝ｼ繧ｹ縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ' }, 404);
     }
 
-    // trackCondition レコードの作成または更新
+    // trackCondition 繝ｬ繧ｳ繝ｼ繝峨・菴懈・縺ｾ縺溘・譖ｴ譁ｰ
     const trackConditionId = `${race.date}_${race.venue}_${race.surface}`;
 
     await db.insert(trackConditions)
@@ -2898,7 +2879,7 @@ app.patch('/api/races/:raceId/cushion', async (c) => {
         }
       });
 
-    // races テーブルで trackConditionId を更新
+    // races 繝・・繝悶Ν縺ｧ trackConditionId 繧呈峩譁ｰ
     await db.update(races)
       .set({
         trackConditionId: trackConditionId,
@@ -2906,24 +2887,24 @@ app.patch('/api/races/:raceId/cushion', async (c) => {
       })
       .where(eq(races.raceId, raceId));
 
-    return c.json({ message: `レース ${raceId} のクッション値を更新しました` });
+    return c.json({ message: `繝ｬ繝ｼ繧ｹ ${raceId} 縺ｮ繧ｯ繝・す繝ｧ繝ｳ蛟､繧呈峩譁ｰ縺励∪縺励◆` });
   } catch (error) {
     console.error('Error updating cushion value:', error);
-    return c.json({ error: 'クッション値の更新に失敗しました' }, 500);
+    return c.json({ error: '繧ｯ繝・す繝ｧ繝ｳ蛟､縺ｮ譖ｴ譁ｰ縺ｫ螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 会場データ（指定日のレース情報を会場ごとに取得）
+// 莨壼ｴ繝・・繧ｿ・域欠螳壽律縺ｮ繝ｬ繝ｼ繧ｹ諠・ｱ繧剃ｼ壼ｴ縺斐→縺ｫ蜿門ｾ暦ｼ・
 app.get('/api/venues', async (c) => {
   try {
     const db = createDb(c.env.DB);
     const date = c.req.query('date');
     
     if (!date) {
-      return c.json({ error: '日付が指定されていません' }, 400);
+      return c.json({ error: '譌･莉倥′謖・ｮ壹＆繧後※縺・∪縺帙ｓ' }, 400);
     }
     
-    // 指定日のレースを取得（trackConditions と JOIN）
+    // 謖・ｮ壽律縺ｮ繝ｬ繝ｼ繧ｹ繧貞叙蠕暦ｼ・rackConditions 縺ｨ JOIN・・
     const raceData = await db.select({
       raceId: races.raceId,
       date: races.date,
@@ -2954,18 +2935,18 @@ app.get('/api/venues', async (c) => {
     .leftJoin(trackConditions, eq(races.trackConditionId, trackConditions.id))
     .where(eq(races.date, date));
     
-    // 会場ごとにグループ化
+    // 莨壼ｴ縺斐→縺ｫ繧ｰ繝ｫ繝ｼ繝怜喧
     const venueMap = new Map();
     
     for (const race of raceData) {
       if (!venueMap.has(race.venue)) {
         venueMap.set(race.venue, {
           venue: race.venue,
-          meetStr: `${race.meetingNumber}回${race.venue}${race.dayNumber}日`,
+          meetStr: `${race.meetingNumber}蝗・{race.venue}${race.dayNumber}譌･`,
           weather: race.weather,
           track: {
-            turf: race.surface === '芝' ? race.trackCond : undefined,
-            dirt: race.surface === 'ダート' ? race.trackCond : undefined
+            turf: race.surface === '闃・ ? race.trackCond : undefined,
+            dirt: race.surface === '繝繝ｼ繝・ ? race.trackCond : undefined
           },
           cushion: race.cushionValue,
           races: []
@@ -2996,15 +2977,15 @@ app.get('/api/venues', async (c) => {
         weather: race.weather
       });
       
-      // トラック状態を更新（複数のレースがある場合は最新の状態を使用）
-      if (race.surface === '芝') {
+      // 繝医Λ繝・け迥ｶ諷九ｒ譖ｴ譁ｰ・郁､・焚縺ｮ繝ｬ繝ｼ繧ｹ縺後≠繧句ｴ蜷医・譛譁ｰ縺ｮ迥ｶ諷九ｒ菴ｿ逕ｨ・・
+      if (race.surface === '闃・) {
         venueData.track.turf = race.trackCond;
       } else {
         venueData.track.dirt = race.trackCond;
       }
     }
     
-    // レースを時間順にソート
+    // 繝ｬ繝ｼ繧ｹ繧呈凾髢馴・↓繧ｽ繝ｼ繝・
     for (const venue of venueMap.values()) {
       venue.races.sort((a: any, b: any) => a.raceNo - b.raceNo);
     }
@@ -3012,39 +2993,39 @@ app.get('/api/venues', async (c) => {
     return c.json(Array.from(venueMap.values()));
   } catch (error) {
     console.error('Error getting venue data:', error);
-    return c.json({ error: '会場情報の取得に失敗しました' }, 500);
+    return c.json({ error: '莨壼ｴ諠・ｱ縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 利用可能な開催日を取得
+// 蛻ｩ逕ｨ蜿ｯ閭ｽ縺ｪ髢句ぎ譌･繧貞叙蠕・
 app.get('/api/venues/dates', async (c) => {
   try {
     const db = createDb(c.env.DB);
     
-    // race_entriesテーブルからユニークな日付を取得
+    // race_entries繝・・繝悶Ν縺九ｉ繝ｦ繝九・繧ｯ縺ｪ譌･莉倥ｒ蜿門ｾ・
     const dates = await db.select({ date: raceEntries.date }).from(raceEntries)
       .groupBy(raceEntries.date);
     
 
     
-    // 有効な日付のみをフィルタリングして日本語形式に変換
+    // 譛牙柑縺ｪ譌･莉倥・縺ｿ繧偵ヵ繧｣繝ｫ繧ｿ繝ｪ繝ｳ繧ｰ縺励※譌･譛ｬ隱槫ｽ｢蠑上↓螟画鋤
     const validDates = dates
       .map(d => d.date)
       .filter(dateStr => {
-        // 空文字やnullをチェック
+        // 遨ｺ譁・ｭ励ｄnull繧偵メ繧ｧ繝・け
         if (!dateStr || typeof dateStr !== 'string') return false;
         
-        // YYYYMMDD形式をチェック（6桁も許可）
+        // YYYYMMDD蠖｢蠑上ｒ繝√ぉ繝・け・・譯√ｂ險ｱ蜿ｯ・・
         const dateRegex = /^\d{6,8}$/;
         if (!dateRegex.test(dateStr)) return false;
         
-        // 6桁の場合は20を前に付ける
+        // 6譯√・蝣ｴ蜷医・20繧貞燕縺ｫ莉倥￠繧・
         let fullDateStr = dateStr;
         if (dateStr.length === 6) {
           fullDateStr = `20${dateStr}`;
         }
         
-        // 有効な日付かチェック
+        // 譛牙柑縺ｪ譌･莉倥°繝√ぉ繝・け
         const year = parseInt(fullDateStr.substring(0, 4));
         const month = parseInt(fullDateStr.substring(4, 6));
         const day = parseInt(fullDateStr.substring(6, 8));
@@ -3055,28 +3036,28 @@ app.get('/api/venues/dates', async (c) => {
                date.getDate() === day;
       })
       .map(dateStr => {
-        // 6桁の場合は20を前に付ける
+        // 6譯√・蝣ｴ蜷医・20繧貞燕縺ｫ莉倥￠繧・
         let fullDateStr = dateStr;
         if (dateStr.length === 6) {
           fullDateStr = `20${dateStr}`;
         }
         
-        // YYYYMMDD形式をYYYY-MM-DD形式に変換
+        // YYYYMMDD蠖｢蠑上ｒYYYY-MM-DD蠖｢蠑上↓螟画鋤
         const year = fullDateStr.substring(0, 4);
         const month = fullDateStr.substring(4, 6);
         const day = fullDateStr.substring(6, 8);
         return `${year}-${month}-${day}`;
       })
-      .sort((a: string, b: string) => a.localeCompare(b)); // 日付順にソート
+      .sort((a: string, b: string) => a.localeCompare(b)); // 譌･莉倬・↓繧ｽ繝ｼ繝・
 
     return c.json(validDates);
   } catch (error) {
     console.error('Error getting available dates:', error);
-    return c.json({ error: '開催日の取得に失敗しました' }, 500);
+    return c.json({ error: '髢句ぎ譌･縺ｮ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆' }, 500);
   }
 });
 
-// 統計情報
+// 邨ｱ險域ュ蝣ｱ
 app.get('/api/stats', async (c) => {
   const db = createDb(c.env.DB);
   
@@ -3095,3 +3076,5 @@ app.get('/api/stats', async (c) => {
 
 export default app;
 import { count, sum } from 'drizzle-orm/sql';
+
+
